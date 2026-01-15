@@ -147,10 +147,10 @@ def compute_fiducial_stats_from_options(stats, cache=None,
             if stat in stats:
                 correlation_args = kwargs[stat]
 
-                def get_sliced(catalog):
+                def get_sliced(catalog, sizes):
                     sliced = []
                     start = 0
-                    for size in local_sizes_randoms:
+                    for size in sizes:
                         sliced.append(catalog[slice(start, start + size)])
                         start += size
                     return sliced
@@ -158,9 +158,9 @@ def compute_fiducial_stats_from_options(stats, cache=None,
                 def get_data(tracer):
                     if recon:
                         return (clone_catalog(data[tracer], **data_rec[tracer]),
-                                get_sliced(clone_catalog(randoms[tracer], **randoms_rec[tracer])),
-                                get_sliced(randoms[tracer]))
-                    return (data[tracer], get_sliced(randoms[tracer]))
+                                get_sliced(clone_catalog(randoms[tracer], **randoms_rec[tracer]), local_sizes_randoms[tracer]),
+                                get_sliced(randoms[tracer], local_sizes_randoms[tracer]))
+                    return (data[tracer], get_sliced(randoms[tracer], local_sizes_randoms[tracer]))
 
                 correlation = compute_particle2_correlation(*[functools.partial(get_data, tracer) for tracer in tracers], **correlation_args)
                 fn = get_measurement_fn(kind=stat, **catalog_args, **correlation_args)

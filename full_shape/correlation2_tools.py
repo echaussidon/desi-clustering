@@ -62,21 +62,25 @@ def compute_particle2_correlation(*get_data_randoms, auw=None, cut=None, battrs=
 
     all_data, all_randoms, all_shifted = [], [], []
 
-    def get_all_particles(particles):
-        if isinstance(particles, tuple) and not isinstance(particles[0], tuple):  # positions, weights
-            return [Particles(*particles, exchange=True)]
-        else:
-            return (Particles(*pp, exchange=True) for pp in particles)
+    def get_pw(catalog):
+        positions = catalog['POSITION']
+        weights = [catalog['INDWEIGHT']] + _format_bitweights(catalog['BITWEIGHT'] if 'BITWEIGHT' in catalog else None)
+        return positions, weights
+
+    def get_all_particles(catalog):
+        if not isinstance(catalog, (tuple, list)):
+            catalog = [catalog]  # list of randoms
+        return [Particles(*get_pw(catalog), exchange=True) for catalog in catalog]
 
     for _get_data_randoms in get_data_randoms:
         # data, randoms (optionally shifted) are tuples (positions, weights)
         data, randoms, *shifted = _get_data_randoms()
-        data = Particles(*data, exchange=True)
+        data = Particles(*get_pw(data), exchange=True)
         randoms = get_all_particles(randoms)
         if shifted:
             shifted = get_all_particles(shifted[0])
         else:
-            shifted = None
+            shifted = [None] * len(randoms)
         all_data.append(data)
         all_randoms.append(randoms)
         all_shifted.append(shifted)
@@ -109,7 +113,7 @@ def compute_particle2_correlation(*get_data_randoms, auw=None, cut=None, battrs=
         if wattrs is None: wattrs = WeightAttrs()
         autocorr = len(particles) == 1
         counts = count2(*(particles * 2 if autocorr else particles), battrs=battrs, wattrs=wattrs, mattrs=mattrs, sattrs=sattrs)['weight']
-        attrs = {'size1': len(particles[0]), 'wsum1': wattrs(particles[0]).sum()}
+        attrs = {'size1': particles[0].size, 'wsum1': wattrs(particles[0]).sum()}
         if autocorr:
             auto_sum = wattrs(*(particles * 2)).sum()
             norm = wattrs(particles[0]).sum()**2 - auto_sum
@@ -118,13 +122,13 @@ def compute_particle2_correlation(*get_data_randoms, auw=None, cut=None, battrs=
             counts = counts.at[zero_index].add(-auto_sum)
         else:
             norm = wattrs(particles[0]).sum() * wattrs(particles[1]).sum()
-            attrs.update({'size2': len(particles[0]), 'wsum2': wattrs(particles[0]).sum()})
+            attrs.update({'size2': particles[1].size, 'wsum2': wattrs(particles[1]).sum()})
         return to_lsstypes(battrs, counts, norm, attrs=attrs)
 
     DD = get_counts(*all_data, wattrs=wattrs)
     data = data.clone(weights=wattrs(data))  # clone data, with IIP weights (in case we provided bitwise weights)
 
-    DS, SD, SS, RR = [], [], []
+    DS, SD, SS, RR = [], [], [], []
     iran = 0
     for all_randoms, all_shifted in zip(zip(*all_randoms, strict=True), zip(*all_shifted, strict=True), strict=True):
         if jax.process_index() == 0:
@@ -136,8 +140,8 @@ def compute_particle2_correlation(*get_data_randoms, auw=None, cut=None, battrs=
         else:
             all_shifted = all_randoms
             SS.append(RR[-1])
-        DS.append(get_counts(all_data[0], all_shifted[1]))
-        SD.append(get_counts(all_shifted[0], all_data[1]))
+        DS.append(get_counts(all_data[0], all_shifted[-1]))
+        SD.append(get_counts(all_shifted[0], all_data[-1]))
 
     DS, SD, SS, RR = (types.sum(XX) for XX in [DS, SD, SS, RR])
     correlation = Count2Correlation(estimator='landyszalay', DD=DD, DS=DS, SD=SD, SS=SS, RR=RR)

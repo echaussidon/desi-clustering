@@ -1,6 +1,6 @@
 """
 salloc -N 1 -C "gpu&hbm80g" -t 02:00:00 --gpus 4 --qos interactive --account desi_g
-source /global/common/software/desi/users/adematti/cosmodesi_environment.sh test
+source /global/common/software/desi/users/adematti/cosmodesi_environment.sh main
 srun -n 4 python check_fiducial_setup.py
 """
 import os
