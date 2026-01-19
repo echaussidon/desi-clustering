@@ -1,7 +1,10 @@
 """
+To run this script on NERSC, use the following command:
+```bash
 salloc -N 1 -C "gpu&hbm80g" -t 02:00:00 --gpus 4 --qos interactive --account desi_g
 source /global/common/software/desi/users/adematti/cosmodesi_environment.sh main
 srun -n 4 python check_fiducial_setup.py
+```
 """
 import os
 import functools
@@ -16,6 +19,7 @@ from compute_fiducial_stats import compute_fiducial_stats_from_options
 
 
 def propose_nran_boxsize_from_catalogs():
+    """Propose number of randoms (nran, 50x data) and box size from catalogs."""
     from jaxpower import get_mesh_attrs
     zranges = [('BGS_BRIGHT-21.35', (0.1, 0.4)), ('LRG', (0.4, 1.1)), ('ELG_LOPnotqso', (0.8, 1.6)), ('QSO', (0.8, 2.1))][::-1]
     for tracer, zrange in zranges:
@@ -35,6 +39,7 @@ def propose_nran_boxsize_from_catalogs():
 
 
 def check_boxsize_spectrum(stats=['mesh2_spectrum']):
+    """Run measurements with varying boxsize to check stability."""
     meas_dir = Path(Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks')
     boxsizes = {'LRG': [5000., 6000., 7000., 8000., 9000., 10000.],
                 'ELG_LOP': [6000., 7000., 8000., 9000., 10000.],
@@ -53,6 +58,7 @@ def check_boxsize_spectrum(stats=['mesh2_spectrum']):
 
 
 def check_nran_spectrum(stats=['mesh2_spectrum']):
+    """Run measurements with varying number of randoms to check stability."""
     meas_dir = Path(Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks')
     nrans = {'LRG': [8, 9, 11, 18],
              'ELG_LOP': [11, 13, 16, 18],

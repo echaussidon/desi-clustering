@@ -11,6 +11,19 @@ logger = logging.getLogger('correlation2')
 
 
 def compute_angular_upweights(*get_data):
+    """
+    Compute angular upweights (AUW) from fibered and parent data catalogs.
+
+    Parameters
+    ----------
+    get_data : callables
+        Functions that return tuples of (fibered_data, parent_data) catalogs. Each catalog must contain 'RA', 'DEC', 'INDWEIGHT', and optionally 'BITWEIGHT'.
+
+    Returns
+    -------
+    auw : ObservableTree
+        Angular upweights as an ObservableTree with 'DD' leaf.
+    """
     from cucount.jax import Particles, BinAttrs, WeightAttrs, count2, setup_logging
     from lsstypes import ObservableLeaf, ObservableTree
 
@@ -62,6 +75,27 @@ def compute_angular_upweights(*get_data):
 
 
 def compute_particle2_correlation(*get_data_randoms, auw=None, cut=None, battrs=None):
+    """
+    Compute two-point correlation function using :mod:`cucount.jax`.
+
+    Parameters
+    ----------
+    get_data_randoms : callables
+        Functions that return tuples of (data, randoms, [shifted]) catalogs.
+        Each catalog must contain 'POSITION', 'INDWEIGHT', and optionally 'BITWEIGHT' for bitwise weights.
+        Randoms and shifted catalogs can be lists of catalogs (for multiple randoms/shifted).
+    auw : ObservableTree, optional
+        Angular upweights to apply. If None, no angular upweights are applied.
+    cut : bool, optional
+        If provided, apply a theta-cut of (0, 0.05) in degress.
+    battrs : dict, optional
+        Bin attributes for cucount.jax.BinAttrs. If None, default bins are used. See cucount.jax.BinAttrs.
+
+    Returns
+    -------
+    correlation : Count2Correlation
+        Two-point correlation function as a Count2Correlation object.
+    """
     from cucount.jax import Particles, BinAttrs, WeightAttrs, SelectionAttrs, MeshAttrs, count2, setup_logging
     from lsstypes import Count2, Count2Correlation
 

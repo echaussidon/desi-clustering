@@ -1,9 +1,13 @@
 """
+Script to create and spawn desipipe tasks to compute clustering measurements on HOLI mocks.
+To create and spawn the tasks on NERSC, use the following commands:
+```bash
 source /global/common/software/desi/users/adematti/cosmodesi_environment.sh main
 python desipipe_holi_mocks.py  # create the list of tasks
 desipipe tasks -q holi_mocks  # check the list of tasks
 desipipe spawn -q holi_mocks --spawn  # spawn the jobs
 desipipe queues -q holi_mocks  # check the queue
+```
 """
 
 import numpy as np
@@ -27,6 +31,8 @@ tm80 = tm.clone(provider=dict(provider='nersc', time='02:00:00',
 
 
 def run_stats(tracer='LRG', imocks=[451], stats=['mesh2_spectrum']):
+    # Everything inside this function will be executed on the compute nodes;
+    # This function must be self-contained; and cannot rely on imports from the outer scope.
     import os
     import sys
     import functools
@@ -50,7 +56,7 @@ def run_stats(tracer='LRG', imocks=[451], stats=['mesh2_spectrum']):
         regions = ['NGC', 'SGC'][:1]
         for region in regions:
             options = dict(catalog=dict(version='holi-v1-altmtl', tracer=tracer, zrange=zranges, region=region, imock=imock), mesh2_spectrum={'cut': True, 'auw': True})
-            options = fill_fiducial_options(**options)
+            options = fill_fiducial_options(options)
             compute_fiducial_stats_from_options(stats, get_measurement_fn=functools.partial(tools.get_measurement_fn, meas_dir=meas_dir), cache=cache, **options)
         jax.experimental.multihost_utils.sync_global_devices('measurements')
         for region_comb, regions in tools.possible_combine_regions(regions).items():

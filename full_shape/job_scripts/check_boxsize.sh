@@ -30,19 +30,19 @@ CELLSIZE=7.8 # Mpc/h
 COMMON_FLAGS="--stats mesh3_spectrum --region NGC SGC --cellsize $CELLSIZE --cat_dir $CAT_DIR/altmtl$imock/loa-v1/mock$imock/LSScats/ --meas_dir $MEAS_DIR/mock$imock/ --combine"
 # COMMON_FLAGS="--todo mesh3_spectrum_sugiyama combine --region NGC SGC --cellsize $CELLSIZE"
 if [ $TRACER == 'ELG_LOPnotqso' ]; then
-    TRACER_FLAGS="--tracer $TRACER --nran $NRAN_ELG --zrange 0.8 1.1 1.1 1.6 --weight_type default_FKP"
+    TRACER_FLAGS="--tracer $TRACER --nran $NRAN_ELG --zrange 0.8 1.1 1.1 1.6"
     # list=(6000 7000 8000 9000 10000)
     list=(6000 7000 8000 9000)
 fi
 
 if [ $TRACER == 'LRG' ]; then
-    TRACER_FLAGS="--tracer $TRACER --nran $NRAN_LRG --zrange 0.4 0.6 0.6 0.8 0.8 1.1 --weight_type default_FKP"
+    TRACER_FLAGS="--tracer $TRACER --nran $NRAN_LRG --zrange 0.4 0.6 0.6 0.8 0.8 1.1"
     # list=(5000 6000 7000 8000 9000 10000)
     list=(5000 6000 7000 8000 9000)
 fi
 
 if [ $TRACER == 'QSO' ]; then
-    TRACER_FLAGS="--tracer $TRACER --nran $NRAN_QSO --zrange 0.8 2.1 --weight_type default_FKP"
+    TRACER_FLAGS="--tracer $TRACER --nran $NRAN_QSO --zrange 0.8 2.1"
     # list=(7000 8000 9000 10000)
     # list=(7000 8000 9000)
     list=(9000)

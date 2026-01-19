@@ -10,6 +10,29 @@ logger = logging.getLogger('reconstruction')
 
 
 def compute_reconstruction(get_data_randoms, mattrs=None, mode='recsym', bias=2.0, smoothing_radius=15.):
+    """
+    Compute density field reconstruction using :mod:`jaxrecon`.
+
+    Parameters
+    ----------
+    get_data_randoms : callable
+        Function that returns a tuple of (data_catalog, randoms_catalog). Each catalog must contain positions and weights.
+    mattrs : list of str, optional
+        List of catalog attributes to retrieve. If None, default attributes are used.
+    mode : {'recsym', 'reciso'}, optional
+        Reconstruction mode. 'recsym' removes large-scale RSD from randoms, 'reciso' does not.
+    bias : float, optional
+        Linear bias of the tracer.
+    smoothing_radius : float, optional
+        Smoothing radius in Mpc/h for the density field.
+
+    Returns
+    -------
+    data_positions_rec : jax.Array
+        Reconstructed data positions.
+    randoms_positions_rec : jax.Array
+        Reconstructed randoms positions.
+    """
     from jaxpower import FKPField
     from jaxrecon.zeldovich import IterativeFFTReconstruction, estimate_particle_delta
 
