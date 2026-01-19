@@ -340,12 +340,11 @@ def get_measurement_fn(meas_dir=Path(os.getenv('SCRATCH')) / 'measurements', ver
     return meas_dir / basename
 
 
-def checks_if_exists_and_readable(get_fn, **kwargs):
+def checks_if_exists_and_readable(get_fn, test_if_readable=True, **kwargs):
     """
-    Return lists of missing or not readable files for all combinations of input kwargs.
+    Return lists of existing, missing and not readable files for all combinations of input kwargs.
     Input :func:`get_fn` must provide the filename associated to the input kwargs.
     """
-
     def is_unreadable(fn):
         fn = str(fn)
         if any(fn.endswith(ext) for ext in ['hdf', 'h4', 'hdf4', 'he2', 'h5', 'hdf5', 'he5', 'h5py']):
@@ -369,17 +368,26 @@ def checks_if_exists_and_readable(get_fn, **kwargs):
             return False
 
     names, values = zip(*kwargs.items())
-    missing, unreadable = [], [], []
+    exists, missing, unreadable = [([], {name: [] for name in names}) for i in range(3)]
+    unreadable = unreadable + ([],)  # add exceptions
+
+    def _append(toret, fn, kwargs, exc=None):
+        toret[0].append(fn)
+        for name in names: toret[1][name].append(kwargs[name])
+        if exc is not None: toret[2].append(exc)
+    
     for values in itertools.product(*values):
         fn_kwargs = dict(zip(names, values))
         fn = get_fn(**fn_kwargs)
         if os.path.exists(fn):
-            exc = is_unreadable(fn)
-            if exc:
-                unreadable.append((fn_kwargs, fn, e))
+            _append(exists, fn, fn_kwargs)
+            if test_if_readable:
+                exc = is_unreadable(fn)
+                if exc:
+                    _append(unreadable, fn, fn_kwargs, exc=exc)
         else:
-            missing.append((fn_kwargs, fn))
-    return missing, unreadable
+            _append(missing, fn, fn_kwargs)
+    return exists, missing, unreadable
 
 
 # Create a lookup table for set bits per byte
@@ -465,6 +473,7 @@ def _compute_missing_power(ntile, bitweights, loc_assigned, method='missing_powe
         toret = 1 - frac_zero_prob
     else:
         raise NotImplementedError(f'unknown method {method}')
+    return toret
 
 
 def _compute_binned_weight(ntile, weight):
@@ -578,6 +587,7 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
 
     zrange, region, weight_type = (kwargs.get(key) for key in ['zrange', 'region', 'weight'])
     fns = get_catalog_fn(kind=kind, **kwargs)
+    if not isinstance(fns, (tuple, list)): fns = [fns]
     exists = {os.path.exists(fn): fn for fn in fns}
     if not all(exists):
         raise IOError(f'Catalogs {[fn for ex, fn in exists.items() if not ex]} do not exist!')
@@ -603,7 +613,7 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
             catalog = _read_catalog(fn, mpicomm=MPI.COMM_SELF)
             if expand is not None:
                 catalog = expand(catalog, *expand)
-            columns = ['RA', 'DEC', 'Z', 'WEIGHT', 'WEIGHT_FKP', 'BITWEIGHTS', 'FRAC_TLOBS_TILES', 'NTILE', 'NX', 'TARGETID']
+            columns = ['RA', 'DEC', 'Z', 'WEIGHT', 'WEIGHT_COMP', 'WEIGHT_FKP', 'BITWEIGHTS', 'FRAC_TLOBS_TILES', 'NTILE', 'NX', 'TARGETID']
             columns = [column for column in columns if column in catalog.columns()]
             catalog = catalog[columns]
             if zrange is not None:
@@ -679,6 +689,11 @@ def read_full_catalog(kind, wntile=None, concatenate=True,
     assert kind in ['parent_data', 'fibered_data', 'parent_randoms', 'fibered_randoms'], 'provide kind'
     region, weight_type = (kwargs.get(key) for key in ['region', 'weight'])
     fns = get_catalog_fn(kind='full_data' if 'data' in kind else 'full_randoms', **kwargs)
+    if not isinstance(fns, (tuple, list)): fns = [fns]
+
+    exists = {os.path.exists(fn): fn for fn in fns}
+    if not all(exists):
+        raise IOError('Catalogs {[fn for ex, fn in exists.items() if not ex]} do not exist!')
 
     def get_wntile(wntile):
         if wntile is None:
@@ -686,10 +701,6 @@ def read_full_catalog(kind, wntile=None, concatenate=True,
         else:
             clustering_data_fn = wntile
         return compute_wntile(clustering_data_fn, mpicomm=mpicomm)
-
-    exists = {os.path.exists(fn): fn for fn in fns}
-    if not all(exists):
-        raise IOError('Catalogs {[fn for ex, fn in exists.items() if not ex]} do not exist!')
 
     catalogs = [None] * len(fns)
     for ifn, fn in enumerate(fns):

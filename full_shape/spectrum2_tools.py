@@ -78,9 +78,13 @@ def prepare_jaxpower_particles(*get_data_randoms, mattrs=None, add_data=tuple(),
             for key, value in _add_randoms.items():
                 _add_randoms[key] = make_array_from_process_local_data(value, pad=0, sharding_mesh=sharding_mesh)
         for key, value in _add_data.items():
-            data.__dict__[key] = data.exchange_direct(value, pad=0)
+            if isinstance(value, list): value = [data.exchange_direct(value, pad=0) for value in value]
+            else: value = data.exchange_direct(value, pad=0)
+            data.__dict__[key] = value
         for key, value in _add_randoms.items():
-            randoms.__dict__[key] = randoms.exchange_direct(value, pad=0)
+            if isinstance(value, list): value = [randoms.exchange_direct(value, pad=0) for value in value]
+            else: value = randoms.exchange_direct(value, pad=0)
+            randoms.__dict__[key] = value
         if all_shifted:
             shifted = all_shifted[i]
             shifted = ParticleField(shifted['POSITION'], shifted['INDWEIGHT'], attrs=mattrs, exchange=True, backend=backend, **kwargs)
@@ -157,6 +161,9 @@ def compute_mesh2_spectrum(*get_data_randoms, mattrs=None, cut=None, auw=None,
         columns_optimal_weights += getattr(optimal_weights, 'columns', ['Z'])   # to compute optimal weights, e.g. for fnl
     all_particles = prepare_jaxpower_particles(*get_data_randoms, mattrs=mattrs, add_data=['BITWEIGHT'] + columns_optimal_weights, add_randoms=columns_optimal_weights)
 
+    if cache is None: cache = {}
+    if edges is None: edges = {'step': 0.001}
+
     def _compute_spectrum(*all_particles, ells):
         # Compute power spectrum for input given multipoles
         if optimal_weights is not None:
@@ -176,11 +183,9 @@ def compute_mesh2_spectrum(*get_data_randoms, mattrs=None, cut=None, auw=None,
         mattrs = all_particles[0][0].attrs
 
         # Define the binner
-        if cache is None: cache = {}
         key = 'bin_mesh2_spectrum_{}'.format('_'.join(map(str, ells)))
         bin = cache.get(key, None)
-        if edges is None: edges = {'step': 0.001}
-        if bin is None or not np.all(bin.mattrs.meshsize, mattrs.meshsize) or not np.all(bin.mattrs.boxsize, mattrs.boxsize):
+        if bin is None or not np.all(bin.mattrs.meshsize == mattrs.meshsize) or not np.allclose(bin.mattrs.boxsize, mattrs.boxsize):
             bin = BinMesh2SpectrumPoles(mattrs, edges=edges, ells=ells)
         cache.setdefault(key, bin)
 

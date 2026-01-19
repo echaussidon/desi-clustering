@@ -52,7 +52,7 @@ def compute_mesh3_spectrum(*get_data_randoms, mattrs=None,
     if cache is None: cache = {}
     bin = cache.get('bin_mesh3_spectrum', None)
     if edges is None: edges = {'step': 0.01 if 'scoccimarro' in basis else 0.005}
-    if bin is None or not np.all(bin.mattrs.meshsize, mattrs.meshsize) or not np.all(bin.mattrs.boxsize, mattrs.boxsize):
+    if bin is None or not np.all(bin.mattrs.meshsize == mattrs.meshsize) or not np.allclose(bin.mattrs.boxsize, mattrs.boxsize):
         bin = BinMesh3SpectrumPoles(mattrs, edges=edges, basis=basis, ells=ells, buffer_size=buffer_size)
     cache.setdefault('bin_mesh3_spectrum', bin)
 

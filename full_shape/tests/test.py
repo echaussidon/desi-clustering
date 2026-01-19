@@ -24,7 +24,7 @@ def test_bitwise(stats=['mesh2_spectrum']):
         zranges = tools.propose_fiducial('zranges', tracer)
         for region in ['NGC', 'SGC']:
             #catalog_options = dict(version='holi-v1-altmtl', tracer=tracer, zrange=zranges, region=region, imock=451)
-            catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight_type='default_FKP_bitwise', nran=1)
+            catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default_FKP_bitwise', nran=1)
             compute_fiducial_stats_from_options(stats, catalog=catalog_options, get_measurement_fn=functools.partial(tools.get_measurement_fn, meas_dir=meas_dir), mesh2_spectrum={'cut': True, 'auw': True}, particle2_correlation={'auw': True})
 
 
@@ -34,7 +34,7 @@ def test_norm():
     for tracer in ['BGS_BRIGHT-21.5']:
         zrange = tools.propose_fiducial('zranges', tracer)[0]
         for region in ['NGC']:
-            catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zrange, region=region, weight_type='default_FKP', nran=2)
+            catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zrange, region=region, weight='default_FKP', nran=2)
             compute_fiducial_stats_from_options(stat, catalog=catalog_options, get_measurement_fn=functools.partial(tools.get_measurement_fn, meas_dir=meas_dir))
             fn = tools.get_measurement_fn(kind=stat, meas_dir=meas_dir, **catalog_options)
             if jax.process_index() == 0:
@@ -48,6 +48,6 @@ if __name__ == '__main__':
     os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.9'
     jax.distributed.initialize()
     setup_logging()
-    #test_bitwise(stats=['mesh2_spectrum'])
-    test_norm()
+    test_bitwise(stats=['mesh2_spectrum'])
+    #test_norm()
     jax.distributed.shutdown()
