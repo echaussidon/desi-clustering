@@ -20,9 +20,9 @@ kwargs = {}
 environ = Environment('nersc-cosmodesi') #, command='module swap pyrecon/main pyrecon/mpi')
 #environ = Environment('nersc-cosmodesi')
 tm = TaskManager(queue=queue, environ=environ)
-tm = tm.clone(scheduler=dict(max_workers=4), provider=dict(provider='nersc', time='02:00:00',
+tm = tm.clone(scheduler=dict(max_workers=25), provider=dict(provider='nersc', time='01:00:00',
                             mpiprocs_per_worker=4, output=output, error=error, stop_after=1, constraint='gpu'))
-tm80 = tm.clone(provider=dict(provider='nersc', time='02:00:00',
+tm80 = tm.clone(provider=dict(provider='nersc', time='01:00:00',
                             mpiprocs_per_worker=4, output=output, error=error, stop_after=1, constraint='gpu&hbm80g'))
 
 
@@ -67,8 +67,8 @@ if __name__ == '__main__':
     imocks = 451 + np.arange(250)
     batch_imocks = np.array_split(imocks, len(imocks) // 10)
 
-    for tracer in ['LRG', 'ELG_LOPnotqso', 'QSO']:
-        for imocks in batch_imocks[:1]:
+    for imocks in batch_imocks[1:]:
+        for tracer in ['LRG', 'ELG_LOPnotqso', 'QSO']:
             if 'interactive' in mode:
                 run_stats(tracer, imocks=imocks, stats=['mesh2_spectrum'])
             else:
