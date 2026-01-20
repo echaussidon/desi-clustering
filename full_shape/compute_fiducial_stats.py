@@ -307,7 +307,7 @@ def main(**kwargs):
     parser.add_argument('--boxsize',  help='box size', type=float, default=None)
     parser.add_argument('--cellsize', help='cell size', type=float, default=None)
     parser.add_argument('--nran', help='number of random files to combine together (1-18 available)', type=int, default=None)
-    parser.add_argument('--expand_randoms', help='expand catalog of randoms; provide version of parent randoms (must be registered in get_catalog_fn)', type=str, default=None)
+    parser.add_argument('--expand_randoms', help='expand catalog of randoms; provide version of parent randoms (must be registered in get_catalog_fn)', type=str, choices=['data-dr2-v2'], default=None)
     parser.add_argument('--meas_dir',  help='base directory for measurements, default is SCRATCH', type=str, default=Path(os.getenv('SCRATCH')) / 'measurements')
     parser.add_argument('--meas_extra',  help='extra string to include in measurement filename', type=str, default='')
     parser.add_argument('--combine', help='combine measurements in two regions', action='store_true')
@@ -343,7 +343,7 @@ def main(**kwargs):
             _options_imock = dict(options_imock)
             _options_imock['catalog'] = _options_imock['catalog'] | dict(region=region)
             if args.expand_randoms:
-                _options_imock['catalog']['expand'] = {'parent_randoms_fn': get_catalog_fn(kind='parent_randoms', version=args.expand_randoms, cat_dir=args.cat_dir, tracer=args.tracer, region=region, nran=max(value['nran'] for value in _options_imock['recon'].values()))}
+                _options_imock['catalog']['expand'] = {'parent_randoms_fn': get_catalog_fn(kind='parent_randoms', version=args.expand_randoms, tracer=args.tracer, region=region, nran=max(value['nran'] for value in _options_imock['recon'].values()))}
             compute_fiducial_stats_from_options(args.stats, get_catalog_fn=get_catalog_fn, get_measurement_fn=get_measurement_fn, cache=cache, **_options_imock)
             jax.experimental.multihost_utils.sync_global_devices('measurements')
         if args.combine and jax.process_index() == 0:
