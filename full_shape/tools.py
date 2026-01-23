@@ -309,6 +309,16 @@ def get_catalog_fn(version=None, cat_dir=None, kind='data', tracer='LRG',
         elif version == 'holi-v1-altmtl':
             cat_dir = desi_dir / f'mocks/cai/LSS/DA2/mocks/holi_v1/altmtl{imock:d}/loa-v1/mock{imock:d}/LSScats'
             ext = 'fits' if 'full' in kind else 'h5'
+        elif version == 'glam-uchuu-v1-complete':
+            cat_dir = desi_dir / f'mocks/cai/LSS/DA2/mocks/GLAM-Uchuu_v1/altmtl{imock:d}/loa-v1/mock{imock:d}/LSScats'
+            if kind == 'data':
+                return cat_dir / f'{tracer}_complete_{region}_clustering.dat.h5'
+            if kind == 'randoms':
+                return [cat_dir / f'{tracer}_complete_{region}_{iran:d}_clustering.ran.h5' for iran in range(nran)]
+            ext = 'h5'
+        elif version == 'glam-uchuu-v1-altmtl':
+            cat_dir = desi_dir / f'mocks/cai/LSS/DA2/mocks/GLAM-Uchuu_v1/altmtl{imock:d}/loa-v1/mock{imock:d}/LSScats'
+            ext = 'h5'
     cat_dir = Path(cat_dir)
     if kind == 'data':
         return cat_dir / f'{tracer}_{region}_clustering.dat.{ext}'
@@ -775,7 +785,7 @@ def read_full_catalog(kind, wntile=None, concatenate=True,
         irank = ifn % mpicomm.size
         catalogs[ifn] = (irank, None)
         if mpicomm.rank == irank:  # Faster to read catalogs from one rank
-            catalog = Catalog.read(fn, mpicomm=MPI.COMM_SELF)
+            catalog = _read_catalog(fn, mpicomm=MPI.COMM_SELF)
             catalog.get(catalog.columns())  # Faster to read all columns at once
             columns = ['RA', 'DEC', 'LOCATION_ASSIGNED', 'BITWEIGHTS', 'NTILE', 'WEIGHT_NTILE', 'FRACZ_TILELOCID', 'FRAC_TLOBS_TILES']
             columns = [column for column in columns if column in catalog.columns()]
