@@ -10,7 +10,7 @@ set -e
 source /global/common/software/desi/users/adematti/cosmodesi_environment.sh main
 CAT_DIR=/dvs_ro/cfs/cdirs/desi/mocks/cai/LSS/DA2/mocks/holi_v1/
 MEAS_DIR=$SCRATCH/cai-dr2-benchmarks/boxsize_checks/
-CODE=../compute_fiducial_stats.py
+CODE=clustering-stats
 
 TRACER=$1
 imock=$2
@@ -51,5 +51,5 @@ echo $COMMON_FLAGS $TRACER_FLAGS
 
 for boxsize in "${list[@]}"; do
     echo "Working on $TRACER for boxsize $boxsize and saving to $MEAS_DIR"
-    srun $JOB_FLAGS python $CODE $COMMON_FLAGS $TRACER_FLAGS --boxsize $boxsize --meas_extra "boxsize$boxsize"
+    srun $JOB_FLAGS python $CODE $COMMON_FLAGS $TRACER_FLAGS --boxsize $boxsize --stats_extra "boxsize$boxsize"
 done

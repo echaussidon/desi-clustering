@@ -2,6 +2,27 @@
 
 Collection of scripts to produce the DESI DR2 clustering measurements.
 
+
+## 📦 Installation
+
+You can install the latest version directly from the GitHub repository:
+
+```bash
+pip install git+https://github.com/cosmodesi/cai-dr2-clustering-products.git
+```
+
+Alternatively, if you plan to contribute or modify the code, install in editable (development) mode:
+
+```bash
+git clone https://github.com/cosmodesi/cai-dr2-clustering-products.git
+cd jax-power
+pip install -e .
+```
+In both cases, to compute (fiducial) clustering statistics you can run the command:
+```bash
+clustering-stats --help
+```
+
 ## Environment
 
 ```

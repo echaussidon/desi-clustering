@@ -8,11 +8,11 @@ set -e
 source /global/common/software/desi/users/adematti/cosmodesi_environment.sh main
 VERSION=data-dr1-v1.5
 
-MEAS_DIR=$SCRATCH/cai-dr2-benchmarks/data_v1.5/
-CODE=../compute_fiducial_stats.py
+STATS_DIR=$SCRATCH/cai-dr2-benchmarks/data_v1.5/
+CODE=clustering-stats
 
 JOB_FLAGS="-N 1 -n 4"
-COMMON_FLAGS="--stats mesh2_spectrum --region NGC SGC --version $VERSION --meas_dir $MEAS_DIR --combine"
+COMMON_FLAGS="--stats mesh2_spectrum --region NGC SGC --version $VERSION --stats_dir $STATS_DIR --combine"
 
 LRG_FLAGS="--tracer LRG --zrange 0.4 0.6 0.6 0.8 0.8 1.1 --weight default_FKP --auw --thetacut"
 ELG_FLAGS="--tracer ELG_LOPnotqso --zrange 0.8 1.1 1.1 1.6 --weight default_FKP --auw --thetacut"

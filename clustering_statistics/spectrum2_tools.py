@@ -2,9 +2,10 @@ import logging
 
 import numpy as np
 import jax
+from jax import numpy as jnp
 import lsstypes as types
 
-from tools import default_mpicomm, _format_bitweights
+from .tools import default_mpicomm, _format_bitweights, compute_fkp_effective_redshift, combine_stats
 
 
 logger = logging.getLogger('spectrum2')
@@ -170,7 +171,7 @@ def compute_mesh2_spectrum(*get_data_randoms, mattrs=None, cut=None, auw=None,
     if cache is None: cache = {}
     if edges is None: edges = {'step': 0.001}
 
-    def _compute_spectrum(all_particles, ells, ifields=None):
+    def _compute_spectrum_ell(all_particles, ells, fields=None):
         # Compute power spectrum for input given multipoles
         attrs = _get_jaxpower_attrs(*all_particles)
         mattrs = all_particles[0][0].attrs
@@ -189,7 +190,7 @@ def compute_mesh2_spectrum(*get_data_randoms, mattrs=None, cut=None, auw=None,
         # Computing shot noise
         all_fkp = [FKPField(data, shifted if shifted is not None else randoms) for (data, randoms, shifted) in all_particles]
         del all_particles
-        num_shotnoise = compute_fkp2_shotnoise(*all_fkp, bin=bin, fields=ifields)
+        num_shotnoise = compute_fkp2_shotnoise(*all_fkp, bin=bin, fields=fields)
 
         jax.block_until_ready((norm, num_shotnoise))
         if jax.process_index() == 0:
@@ -204,7 +205,7 @@ def compute_mesh2_spectrum(*get_data_randoms, mattrs=None, cut=None, auw=None,
             from jaxpower.particle2 import convert_particles
             all_particles = [convert_particles(fkp.particles) for fkp in all_fkp]
             close = compute_particle2(*all_particles, bin=pbin, los=los)
-            close = close.clone(num_shotnoise=compute_particle2_shotnoise(*all_particles, bin=pbin, fields=ifields), norm=norm)
+            close = close.clone(num_shotnoise=compute_particle2_shotnoise(*all_particles, bin=pbin, fields=fields), norm=norm)
             close = close.to_spectrum(bin.xavg)
             results['cut'] = -close.value()
 
@@ -231,7 +232,7 @@ def compute_mesh2_spectrum(*get_data_randoms, mattrs=None, cut=None, auw=None,
             wattrs = WeightAttrs(bitwise=bitwise, angular=angular)
             pbin = BinParticle2SpectrumPoles(mattrs, edges=bin.edges, xavg=bin.xavg, sattrs=sattrs, wattrs=wattrs, ells=ells)
             DD = compute_particle2(*all_data, bin=pbin, los=los)
-            DD = DD.clone(num_shotnoise=compute_particle2_shotnoise(*all_data, bin=pbin, fields=ifields), norm=norm)
+            DD = DD.clone(num_shotnoise=compute_particle2_shotnoise(*all_data, bin=pbin, fields=fields), norm=norm)
             results['auw'] = DD.value()
 
         jax.block_until_ready(results)
@@ -261,15 +262,15 @@ def compute_mesh2_spectrum(*get_data_randoms, mattrs=None, cut=None, auw=None,
         return results
 
     if optimal_weights is None:
-        results = _compute_spectrum(all_particles, ells=ells)
+        results = _compute_spectrum_ell(all_particles, ells=ells)
     else:
         results = {}
         for ell in ells:
             if jax.process_index() == 0:
                 logger.info(f'Applying optimal weights for ell = {ell:d}')
 
-            ifields = tuple(range(len(all_particles)))
-            ifields = ifields + (ifields[-1],) * (2 - len(ifields))
+            fields = tuple(range(len(all_particles)))
+            fields = fields + (fields[-1],) * (2 - len(fields))
             all_particles = tuple(all_particles) + (all_particles[-1],) * (2 - len(all_particles))
 
             def _get_optimal_weights(all_data):
@@ -284,13 +285,13 @@ def compute_mesh2_spectrum(*get_data_randoms, mattrs=None, cut=None, auw=None,
             for all_data, all_randoms, all_shifted in zip(*[_get_optimal_weights([particles[i] for particles in all_particles]) for i in range(3)]):
                 # all_data, all_randoms, all_shifted are tuples of ParticleField with optimal weights applied
                 _all_particles = list(zip(all_data, all_randoms, all_shifted))
-                _result = _compute_spectrum(_all_particles, ells=[ell], ifields=ifields)
+                _result = _compute_spectrum_ell(_all_particles, ells=[ell], fields=fields)
                 for key in _result:  # raw, cut, auw
                     result_ell.setdefault(key, [])
                     result_ell[key].append(_result[key])
             for key, value in result_ell.items():
                 results.setdefault(key, [])
-                results[key].append(types.sum(value))  # sum 1<->2
+                results[key].append(combine_stats(value))  # sum 1<->2
         for key in results:
             results[key] = types.join(results[key])  # join multipoles
 
@@ -299,70 +300,127 @@ def compute_mesh2_spectrum(*get_data_randoms, mattrs=None, cut=None, auw=None,
     return results
 
 
-def compute_window_mesh2_spectrum(*get_randoms, spectrum, kind='smooth', optimal_weights=None):
-    # TODO FIXME
-    from jax import numpy as jnp
-    from jaxpower import (ParticleField, compute_mesh2_spectrum_window, BinMesh2SpectrumPoles, BinMesh2CorrelationPoles, compute_mesh2_correlation, compute_fkp2_shotnoise, compute_smooth2_spectrum_window, MeshAttrs, get_smooth2_window_bin_attrs, interpolate_window_function, compute_mesh2_spectrum, split_particles, read)
-    mattrs = MeshAttrs(**{name: spectrum.attrs[name] for name in ['boxsize', 'boxcenter', 'meshsize']})
+
+def compute_window_mesh2_spectrum(*get_data_randoms, spectrum, optimal_weights=None):
+    r"""
+    Compute the 2-point spectrum window with :mod:`jaxpower`.
+
+    Parameters
+    ----------
+    get_data_randoms : callables
+        Functions that return tuples of (data, randoms) catalogs.
+        See :func:`prepare_jaxpower_particles` for details.
+    spectrum : Mesh2SpectrumPoles
+        Measured 2-point spectrum multipoles.
+    optimal_weights : callable or None, optional
+        Function taking (ell, catalog) as input and returning total weights to apply to data and randoms.
+        It can have an optional attribute 'columns' that specifies which additional columns are needed to compute the optimal weights.
+        As a default, ``optimal_weights.columns = ['Z']`` to indicate that redshift information is needed.
+        A dictionary ``catalog`` of columns is provided, containing 'INDWEIGHT' and the requested columns.
+        If ``None``, no optimal weights are applied.
+
+    Returns
+    -------
+    spectrum : WindowMatrix or dict of WindowMatrix
+        The computed 2-point spectrum window. If `auw` is provided, returns a dict with keys 'raw' and 'auw'.
+    """
+    # FIXME: data is not used, could be dropped, add auw
+    from jaxpower import (BinMesh2SpectrumPoles, BinMesh2CorrelationPoles, compute_mesh2_correlation,
+                           compute_smooth2_spectrum_window, get_smooth2_window_bin_attrs, interpolate_window_function, split_particles)
+    from lsstypes import ObservableTree
+
+    ells = spectrum.ells
+    mattrs = {name: spectrum.attrs[name] for name in ['boxsize', 'boxcenter', 'meshsize']}
     los = spectrum.attrs['los']
-    pole = next(iter(spectrum))
-    ells, norm, edges = spectrum.ells, pole.values('norm')[0], pole.edges('k')
-    bin = BinMesh2SpectrumPoles(mattrs, edges=edges, ells=ells)
-    step = bin.edges[-1, 1] - bin.edges[-1, 0]
-    edgesin = np.arange(0., 1.2 * bin.edges.max(), step)
-    edgesin = jnp.column_stack([edgesin[:-1], edgesin[1:]])
     ellsin = [0, 2, 4]
-
-    prepare_jaxpower_particles(*get_data_randoms, mattrs=mattrs, add_data=tuple(), add_randoms=tuple(), **kwargs)
-    zeff = compute_fkp_effective_redshift(randoms, order=2)
-    randoms = spectrum.attrs['wsum_data1'] / randoms.sum() * randoms
-
-    kind = 'smooth'
-    #kind = 'infinite'
     kw_paint = dict(resampler='tsc', interlacing=3, compensate=True)
 
-    if kind == 'smooth':
+    columns_optimal_weights = []
+    if optimal_weights is not None:
+        columns_optimal_weights += getattr(optimal_weights, 'columns', ['Z'])   # to compute optimal weights, e.g. for fnl
+    all_particles = prepare_jaxpower_particles(*get_data_randoms, mattrs=mattrs, add_randoms=['IDS'] + columns_optimal_weights)
+    all_randoms = [particles[1] for particles in all_particles]
+    del all_particles
+
+    stop, step = -np.inf, np.inf
+    for pole in spectrum:
+        edges = pole.edges('k')
+        stop = max(edges.max(), stop)
+        step = min(np.nanmin(np.diff(edges, axis=-1)), step)
+    edgesin = np.arange(0., 1.2 * stop, step)
+    edgesin = jnp.column_stack([edgesin[:-1], edgesin[1:]])
+    window_correlation = ObservableTree()
+
+    def _compute_window_ell(all_randoms, ells, fields=None):
+        seed = [(42, randoms.__dict__['IDS']) for randoms in all_randoms]  # for process invariance
+        mattrs = all_randoms[0][0].attrs
+        pole = spectrum.get(ells[0])
+        bin = BinMesh2SpectrumPoles(mattrs, edges=pole.edges('k'), ells=ells)
+        # Get normalization from input power spectrum
+        norm = pole.values('norm')
+        # Compute effective redshift
+        zeff = compute_fkp_effective_redshift(*all_randoms, order=2, split=seed, fields=fields)
+        results = {}
         correlations = []
         kw = get_smooth2_window_bin_attrs(ells, ellsin)
-        compute_mesh2_correlation = jax.jit(compute_mesh2_correlation, static_argnames=['los'], donate_argnums=[0, 1])
+        jitted_compute_mesh2_correlation = jax.jit(compute_mesh2_correlation, static_argnames=['los'], donate_argnums=[0])
         # Window computed in configuration space, summing Bessel over the Fourier-space mesh
         coords = jnp.logspace(-3, 5, 4 * 1024)
         for scale in [1, 4]:
-            mattrs2 = mattrs.clone(boxsize=scale * mattrs.boxsize) #, meshsize=800)
+            mattrs2 = mattrs.clone(boxsize=scale * mattrs.boxsize)
             meshes = []
-            for _ in split_particles(randoms.clone(attrs=mattrs2, exchange=True, backend='jax'), None, seed=42):
-                alpha = spectrum.attrs['wsum_data1'] / _.sum()
-                meshes.append(alpha * _.paint(**kw_paint, out='real'))
-            sbin = BinMesh2CorrelationPoles(mattrs2, edges=np.arange(0., mattrs2.boxsize.min() / 2., mattrs2.cellsize.min()), **kw, basis='bessel') #, kcut=(0., mattrs2.knyq.min()))
-            #num_shotnoise = compute_fkp2_shotnoise(randoms, bin=sbin)
-            correlation = compute_mesh2_correlation(*meshes, bin=sbin, los=los).clone(norm=[norm] * len(sbin.ells)) #, num_shotnoise=num_shotnoise)
+            for iran, randoms in enumerate(split_particles([randoms.clone(attrs=mattrs2, exchange=True, backend='mpi') for randoms in all_randoms] + [None] * (2 - len(all_randoms)),
+                                                           seed=seed, fields=fields)):
+                alpha = pole.attrs[f'wsum_data{iran:d}'] / randoms.weights.sum()
+                meshes.append(alpha * randoms.paint(**kw_paint, out='real'))
+            sbin = BinMesh2CorrelationPoles(mattrs2, edges=np.arange(0., mattrs2.boxsize.min() / 2., mattrs2.cellsize.min()), **kw, basis='bessel')
+            correlation = jitted_compute_mesh2_correlation(meshes, bin=sbin, los=los).clone(norm=[np.mean(norm)] * len(sbin.ells))
             del meshes
-            correlation_fn = output_fn.replace('window_mesh2_spectrum', f'window_correlation{scale:d}_bessel_mesh2_spectrum')
-            if jax.process_index() == 0:
-                logger.info(f'Writing to {correlation_fn}')
-                correlation.write(correlation_fn)
+            window_correlation.insert(correlation, labels={'oells': tuple(ells), 'scale': scale})
             correlation = interpolate_window_function(correlation, coords=coords, order=3)
             correlations.append(correlation)
         limits = [0, 0.4 * mattrs.boxsize.min(), 2. * mattrs.boxsize.max()]
         weights = [jnp.maximum((coords >= limits[i]) & (coords < limits[i + 1]), 1e-10) for i in range(len(limits) - 1)]
-        correlation = correlations[0].sum(correlations, weights=weights)
-        flags = ('fftlog',)
-        if output_fn is not None and jax.process_index() == 0:
-            correlation_fn = output_fn.replace('window_mesh2_spectrum', 'window_correlation_bessel_mesh2_spectrum')
-            logger.info(f'Writing to {correlation_fn}')
-            correlation.write(correlation_fn)
-        window = compute_smooth2_spectrum_window(correlation, edgesin=edgesin, ellsin=ellsin, bin=bin, flags=flags)
+        results['window_mesh2_correlation_raw'] = correlation = correlations[0].sum(correlations, weights=weights)
+        window = compute_smooth2_spectrum_window(correlation, edgesin=edgesin, ellsin=ellsin, bin=bin, flags=('fftlog',))
+        observable = window.observable.map(lambda pole: pole.clone(norm=norm * np.ones_like(pole.values('norm')),
+                                                                   attrs=pole.attrs | dict(zeff=zeff)))
+        results['raw'] = window.clone(observable=observable, value=window.value / (norm[..., None] / np.mean(norm)))  # just in case norm is k-dependent
+        return results
+
+    if optimal_weights is None:
+        results = _compute_window_ell(all_randoms, ells=ells)
     else:
-        kw_paint = dict(resampler='tsc', interlacing=3, compensate=True)
-        meshes = []
-        for _ in split_particles(randoms, None, seed=42):
-            alpha = spectrum.attrs['wsum_data1'] / _.sum()
-            meshes.append(alpha * _.paint(**kw_paint, out='real'))
-        window = compute_mesh2_spectrum_window(*meshes, edgesin=edgesin, ellsin=ellsin, los=los, bin=bin, pbar=True, flags=('infinite',), norm=norm)
-        #window = compute_mesh2_spectrum_window(mesh, edgesin=edgesin[:3], ellsin=ellsin, los=los, bin=bin, pbar=True, flags=[], norm=norm)
-    window = window.clone(observable=window.observable.map(lambda pole: pole.clone(norm=norm * np.ones_like(pole.values('norm')))))
-    for pole in window.theory: pole._meta['z'] = zeff
-    if output_fn is not None and jax.process_index() == 0:
-        logger.info(f'Writing to {output_fn}')
-        window.write(output_fn)
-    return window
+        results = {}
+        for ell in ells:
+            if jax.process_index() == 0:
+                logger.info(f'Applying optimal weights for ell = {ell:d}')
+
+            fields = tuple(range(len(all_particles)))
+            fields = fields + (fields[-1],) * (2 - len(fields))
+            all_particles = tuple(all_particles) + (all_particles[-1],) * (2 - len(all_particles))
+
+            def _get_optimal_weights(all_data):
+                # all_data is [data1, data2] or [randoms1, randoms2] or [shifted1, shifted2]
+                if all_data[0] is None:  # shifted is None, yield None
+                    while True:
+                        yield tuple(None for data in all_data)
+                for all_weights in optimal_weights(ell, [{'INDWEIGHT': data.weights} | {column: data.__dict__[column] for column in columns_optimal_weights} for data in all_data]):
+                    yield tuple(data.clone(weights=weights) for data, weights in zip(all_data, all_weights))
+
+            result_ell = {}
+            for all_randoms in _get_optimal_weights(all_randoms):
+                _result = _compute_window_ell(all_randoms, ells=[ell], fields=fields)
+                for key in _result:  # raw, cut, auw
+                    result_ell.setdefault(key, [])
+                    result_ell[key].append(_result[key])
+            for key, windows in result_ell.items():
+                results.setdefault(key, [])
+                results[key].append(combine_stats(windows))  # sum 1<->2
+        for key in results:
+            observables = [window.observable for window in results[key]]
+            observable = types.join(observables)
+            value = np.concatenate([window.value for window in results[key]], axis=0)
+            results[key] = results[key[0]].clone(value=value, observable=observable)  # join multipoles
+
+    return results

@@ -3,8 +3,8 @@ import logging
 import numpy as np
 import jax
 
-from tools import _format_bitweights
 import lsstypes as types
+from .tools import _format_bitweights
 
 
 logger = logging.getLogger('correlation2')

@@ -11,19 +11,16 @@ desipipe queues -q holi_mocks  # check the queue
 """
 import os
 from pathlib import Path
-import functools
-import sys
 
 import numpy as np
 from desipipe import Queue, Environment, TaskManager, spawn, setup_logging
 
-sys.path.insert(0, '../')
-import tools
+from clustering_statistics import tools
 
 setup_logging()
 
 
-def run_stats(tracer='LRG', version='holi-v1-altmtl', weight='default_FKP', imocks=[451], meas_dir=Path(os.getenv('SCRATCH')) / 'measurements', stats=['mesh2_spectrum']):
+def run_stats(tracer='LRG', version='holi-v1-altmtl', weight='default_FKP', imocks=[451], stats_dir=Path(os.getenv('SCRATCH')) / 'measurements', stats=['mesh2_spectrum']):
     # Everything inside this function will be executed on the compute nodes;
     # This function must be self-contained; and cannot rely on imports from the outer scope.
     import os
@@ -35,10 +32,7 @@ def run_stats(tracer='LRG', version='holi-v1-altmtl', weight='default_FKP', imoc
     try: jax.distributed.initialize()
     except RuntimeError: print('Distributed environment already initialized')
     else: print('Initializing distributed environment')
-    sys.path.insert(0, '../')
-    import tools
-    from tools import setup_logging
-    from compute_fiducial_stats import compute_fiducial_stats_from_options, combine_fiducial_stats_from_options, fill_fiducial_options
+    from clustering_statistics import tools, setup_logging, compute_stats_from_options, combine_stats_from_options, fill_fiducial_options
 
     setup_logging()
     cache = {}
@@ -48,23 +42,22 @@ def run_stats(tracer='LRG', version='holi-v1-altmtl', weight='default_FKP', imoc
         for region in regions:
             options = dict(catalog=dict(version=version, tracer=tracer, zrange=zranges, region=region, weight=weight, imock=imock), mesh2_spectrum={'cut': True, 'auw': True if 'altmtl' in version else None})
             options = fill_fiducial_options(options)
-            compute_fiducial_stats_from_options(stats, get_measurement_fn=functools.partial(tools.get_measurement_fn, meas_dir=meas_dir), cache=cache, **options)
+            compute_stats_from_options(stats, get_measurement_fn=functools.partial(tools.get_measurement_fn, stats_dir=stats_dir), cache=cache, **options)
         jax.experimental.multihost_utils.sync_global_devices('measurements')
         for region_comb, regions in tools.possible_combine_regions(regions).items():
             _options_imock = dict(options)
             _options_imock['catalog'] = _options_imock['catalog'] | dict(imock=imock)
-            combine_fiducial_stats_from_options(stats, region_comb, regions, get_measurement_fn=functools.partial(tools.get_measurement_fn, meas_dir=meas_dir), **_options_imock)
+            combine_stats_from_options(stats, region_comb, regions, get_measurement_fn=functools.partial(tools.get_measurement_fn, stats_dir=stats_dir), **_options_imock)
     #jax.distributed.shutdown()
 
 
 if __name__ == '__main__':
 
-    todo = ['exists', 'interactive']
     imocks = 451 + np.arange(25)
 
-    meas_dir = Path(os.getenv('SCRATCH')) / 'holi_mocks_validation'
+    stats_dir = Path(os.getenv('SCRATCH')) / 'holi_mocks_validation'
 
     for tracer in ['LRG']:
         for weight in ['default_compntile', 'default']:
-            run_stats(tracer, version='holi-v1-complete', weight=weight, imocks=imocks, meas_dir=meas_dir)
-        run_stats(tracer, version='holi-v1-altmtl', weight=weight, imocks=imocks, meas_dir=meas_dir)
+            run_stats(tracer, version='holi-v1-complete', weight=weight, imocks=imocks, stats_dir=stats_dir)
+        run_stats(tracer, version='holi-v1-altmtl', weight=weight, imocks=imocks, stats_dir=stats_dir)

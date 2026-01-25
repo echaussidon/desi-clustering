@@ -11,11 +11,8 @@ import functools
 from pathlib import Path
 
 import jax
-import numpy as np
 
-import tools
-from tools import setup_logging
-from compute_fiducial_stats import compute_fiducial_stats_from_options
+from clustering_statistics import tools, setup_logging, compute_stats_from_options
 
 
 def propose_nran_boxsize_from_catalogs():
@@ -40,7 +37,7 @@ def propose_nran_boxsize_from_catalogs():
 
 def check_boxsize_spectrum(stats=['mesh2_spectrum']):
     """Run measurements with varying boxsize to check stability."""
-    meas_dir = Path(Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks')
+    stats_dir = Path(Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks')
     boxsizes = {'LRG': [5000., 6000., 7000., 8000., 9000., 10000.],
                 'ELG_LOP': [6000., 7000., 8000., 9000., 10000.],
                 'QSO': [7000., 8000., 9000., 10000.]}
@@ -53,13 +50,13 @@ def check_boxsize_spectrum(stats=['mesh2_spectrum']):
                 #mattrs = dict(boxsize=boxsize, cellsize=cellsize)
                 mattrs = dict(boxsize=boxsize, cellsize=cellsize)
                 extra = f'boxsize{boxsize:.0f}_cellsize{cellsize:.1f}'
-                compute_fiducial_stats_from_options(stats, catalog=catalog_options, mattrs=mattrs,
-                                                    get_measurement_fn=functools.partial(tools.get_measurement_fn, meas_dir=meas_dir, extra=extra), mesh2_spectrum={'cut': True, 'auw': True})
+                compute_stats_from_options(stats, catalog=catalog_options, mattrs=mattrs,
+                                            get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir, extra=extra), mesh2_spectrum={'cut': True, 'auw': True})
 
 
 def check_nran_spectrum(stats=['mesh2_spectrum']):
     """Run measurements with varying number of randoms to check stability."""
-    meas_dir = Path(Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks')
+    stats_dir = Path(Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks')
     nrans = {'LRG': [8, 9, 11, 18],
              'ELG_LOP': [11, 13, 16, 18],
              'QSO': [8, 9, 11, 18]}
@@ -69,8 +66,8 @@ def check_nran_spectrum(stats=['mesh2_spectrum']):
             for nran in nrans[tracer]:
                 catalog_options = dict(version='holi-v1-altmtl', tracer=tracer, zrange=zranges, region=region, nran=nran, imock=451)
                 extra = f'nran{nran:d}'
-                compute_fiducial_stats_from_options(stats, catalog=catalog_options,
-                                                    get_measurement_fn=functools.partial(tools.get_measurement_fn, meas_dir=meas_dir, extra=extra), mesh2_spectrum={'cut': True, 'auw': True})
+                compute_stats_from_options(stats, catalog=catalog_options,
+                                            get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir, extra=extra), mesh2_spectrum={'cut': True, 'auw': True})
 
 
 if __name__ == '__main__':

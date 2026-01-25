@@ -2,8 +2,8 @@ import logging
 
 import jax
 
-from tools import compute_fkp_effective_redshift
-from spectrum2_tools import prepare_jaxpower_particles
+from .tools import compute_fkp_effective_redshift
+from .spectrum2_tools import prepare_jaxpower_particles
 
 
 logger = logging.getLogger('reconstruction')
