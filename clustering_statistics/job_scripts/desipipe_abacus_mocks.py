@@ -66,7 +66,7 @@ def run_stats(tracer='LRG', version='abacus-2ndgen-complete', imocks=[0], stats_
 if __name__ == '__main__':
 
     mode = 'interactive'
-    #stats = ['mesh2_spectrum', 'mesh3_spectrum']
+    #stats = ['mesh2_spectrum']
     stats = ['window_mesh2_spectrum']
     imocks = np.arange(25)
 

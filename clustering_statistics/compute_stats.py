@@ -193,30 +193,6 @@ def compute_stats_from_options(stats, analysis='full_shape', cache=None,
                             fn = get_stats_fn(kind=stat, catalog=fn_catalog_options, **kw)
                             tools.write_stats(fn, spectrum[key])
 
-                funcs = {f'{recon}mesh2_spectrum': compute_mesh2_spectrum, f'{recon}mesh3_spectrum': compute_mesh3_spectrum}
-
-                for stat, func in funcs.items():
-                    if stat in stats:
-                        spectrum_options = dict(kwargs[stat])
-                        selection_weights = spectrum_options.pop('selection_weights', None)
-
-                        def get_data(tracer):
-                            czrandoms = Catalog.concatenate(zrandoms[tracer])
-                            if recon:
-                                toret = (get_catalog_recon(zdata[tracer]), czrandoms,
-                                         get_catalog_recon(czrandoms))
-                            else:
-                                toret = (zdata[tracer], czrandoms)
-                            if selection_weights:
-                                return tuple(selection_weights[tracer](catalog) for catalog in toret)
-                            return toret
-
-                        #spectrum = func(*[functools.partial(get_data, tracer) for tracer in tracers], cache=cache, **spectrum_options)
-                        #if not isinstance(spectrum, dict): spectrum = {'raw': spectrum}
-                        for key, kw in _expand_cut_auw_options(stat, spectrum_options).items():
-                            fn = get_stats_fn(kind=stat, catalog=fn_catalog_options, **kw)
-                            tools.write_stats(fn, spectrum[key])
-
                 jax.experimental.multihost_utils.sync_global_devices('spectrum')  # such that spectrum ready for window
                 funcs = {'window_mesh2_spectrum': compute_window_mesh2_spectrum, 'window_mesh3_spectrum': compute_window_mesh3_spectrum}
 
