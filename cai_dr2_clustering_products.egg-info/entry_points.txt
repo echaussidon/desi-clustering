@@ -1,0 +1,2 @@
+[console_scripts]
+clustering-stats = clustering_statistics.compute_stats:main

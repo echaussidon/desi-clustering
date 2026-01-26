@@ -4,6 +4,7 @@ import functools
 from pathlib import Path
 
 import numpy as np
+import jax
 import lsstypes as types
 
 from . import tools
@@ -210,12 +211,13 @@ def compute_stats_from_options(stats, analysis='full_shape', cache=None,
                                 return tuple(selection_weights[tracer](catalog) for catalog in toret)
                             return toret
 
-                        spectrum = func(*[functools.partial(get_data, tracer) for tracer in tracers], cache=cache, **spectrum_options)
-                        if not isinstance(spectrum, dict): spectrum = {'raw': spectrum}
+                        #spectrum = func(*[functools.partial(get_data, tracer) for tracer in tracers], cache=cache, **spectrum_options)
+                        #if not isinstance(spectrum, dict): spectrum = {'raw': spectrum}
                         for key, kw in _expand_cut_auw_options(stat, spectrum_options).items():
                             fn = get_stats_fn(kind=stat, catalog=fn_catalog_options, **kw)
                             tools.write_stats(fn, spectrum[key])
 
+                jax.experimental.multihost_utils.sync_global_devices('spectrum')  # such that spectrum ready for window
                 funcs = {'window_mesh2_spectrum': compute_window_mesh2_spectrum, 'window_mesh3_spectrum': compute_window_mesh3_spectrum}
 
                 for stat, func in funcs.items():
@@ -232,7 +234,8 @@ def compute_stats_from_options(stats, analysis='full_shape', cache=None,
 
                         spectrum_fn = window_options.pop('spectrum', None)
                         if spectrum_fn is None:
-                            spectrum_fn = get_stats_fn(kind=stat, catalog=fn_catalog_options, **(kwargs[stat.replace('window_', '')] | dict(auw=False, cut=False)))
+                            spectrum_stat = stat.replace('window_', '')
+                            spectrum_fn = get_stats_fn(kind=spectrum_stat, catalog=fn_catalog_options, **(kwargs[spectrum_stat] | dict(auw=False, cut=False)))
                         spectrum = types.read(spectrum_fn)
 
                         def get_extra(ibatch, nbatch):
@@ -246,7 +249,7 @@ def compute_stats_from_options(stats, analysis='full_shape', cache=None,
                             fns = [get_stats_fn(kind=key, catalog=fn_catalog_options, **(window_options | dict(auw=False, cut=False, extra=get_extra(ibatch, nbatch)))) for ibatch in range(nbatch)]
                             window_options['computed_branches'] = [types.read(fn) for fn in fns]
 
-                        window = func(*[functools.partial(get_data, tracer) for tracer in tracers], spectrum, **window_options)
+                        window = func(*[functools.partial(get_data, tracer) for tracer in tracers], spectrum=spectrum, **window_options)
                         for key, kw in _expand_cut_auw_options(stat, window_options).items():
                             fn = get_stats_fn(kind=stat, catalog=fn_catalog_options, **kw)
                             if key in window:
@@ -288,9 +291,9 @@ def list_stats(stats, get_stats_fn=tools.get_stats_fn, **kwargs):
         _catalog_options = {tracer: catalog_options[tracer] | dict(zrange=zrange[tracer]) for tracer in tracers}
         for stat in stats:
             for kw in _expand_cut_auw_options(stat, kwargs[stat]).values():
-                kwargs = dict(catalog=_catalog_options, **kw)
-                fn = get_stats_fn(kind=stat, **kwargs)
-                toret[stat].append((fn, kwargs))
+                kw = dict(catalog=_catalog_options, **kw)
+                fn = get_stats_fn(kind=stat, **kw)
+                toret[stat].append((fn, kw))
     return toret
 
 
@@ -316,16 +319,16 @@ def combine_stats_from_options(stats, region_comb, regions, get_stats_fn=tools.g
     """
     options = fill_fiducial_options(kwargs)
     regions = list(regions) + [region_comb]
-    fns = {}
+    all_fns = {}
     for region in regions:
         kwargs = dict(options)
         kwargs['catalog'] = {tracer: options['catalog'][tracer] | dict(region=region) for tracer in options['catalog']}
-        fns[region] = list_stats(stats, get_stats_fn=tools.get_stats_fn, **kwargs)
+        all_fns[region] = list_stats(stats, get_stats_fn=tools.get_stats_fn, **kwargs)
 
-    stats = next(fns.values()).keys()
+    stats = next(iter(all_fns.values())).keys()
     for stat in stats:
-        for ifn, (fn_comb, _) in enumerate(fns[region_comb][stat]):
-            fns = fns[region][stat][ifn]
+        for ifn, (fn_comb, _) in enumerate(all_fns[region_comb][stat]):
+            fns = [all_fns[region][stat][ifn][0] for region in regions]  # [1] is kwargs
             exists = {os.path.exists(fn): fn for fn in fns}
             if all(exists):
                 combined = tools.combine_stats([types.read(fn) for fn in fns])

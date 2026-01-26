@@ -45,9 +45,7 @@ def run_stats(tracer='LRG', version='holi-v1-altmtl', weight='default_FKP', imoc
             compute_stats_from_options(stats, get_measurement_fn=functools.partial(tools.get_measurement_fn, stats_dir=stats_dir), cache=cache, **options)
         jax.experimental.multihost_utils.sync_global_devices('measurements')
         for region_comb, regions in tools.possible_combine_regions(regions).items():
-            _options_imock = dict(options)
-            _options_imock['catalog'] = _options_imock['catalog'] | dict(imock=imock)
-            combine_stats_from_options(stats, region_comb, regions, get_measurement_fn=functools.partial(tools.get_measurement_fn, stats_dir=stats_dir), **_options_imock)
+            combine_stats_from_options(stats, region_comb, regions, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), **options)
     #jax.distributed.shutdown()
 
 

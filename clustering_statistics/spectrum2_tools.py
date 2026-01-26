@@ -174,6 +174,7 @@ def compute_mesh2_spectrum(*get_data_randoms, mattrs=None, cut=None, auw=None,
     def _compute_spectrum_ell(all_particles, ells, fields=None):
         # Compute power spectrum for input given multipoles
         attrs = _get_jaxpower_attrs(*all_particles)
+        attrs.update(los=los)
         mattrs = all_particles[0][0].attrs
 
         # Define the binner
@@ -250,6 +251,7 @@ def compute_mesh2_spectrum(*get_data_randoms, mattrs=None, cut=None, auw=None,
         spectrum = jitted_compute_mesh2_spectrum(*meshes, bin=bin, los=los)
         spectrum = spectrum.clone(norm=norm, num_shotnoise=num_shotnoise)
         spectrum = spectrum.map(lambda pole: pole.clone(attrs=attrs))
+        spectrum = spectrum.clone(attrs=attrs)
         jax.block_until_ready(spectrum)
         if jax.process_index() == 0:
             logger.info('Mesh-based computation finished')
@@ -349,15 +351,15 @@ def compute_window_mesh2_spectrum(*get_data_randoms, spectrum, optimal_weights=N
         step = min(np.nanmin(np.diff(edges, axis=-1)), step)
     edgesin = np.arange(0., 1.2 * stop, step)
     edgesin = jnp.column_stack([edgesin[:-1], edgesin[1:]])
-    window_correlation = ObservableTree()
+    window_correlation = ObservableTree([], oells=[], scale=[])
 
     def _compute_window_ell(all_randoms, ells, fields=None):
         seed = [(42, randoms.__dict__['IDS']) for randoms in all_randoms]  # for process invariance
-        mattrs = all_randoms[0][0].attrs
+        mattrs = all_randoms[0].attrs
         pole = spectrum.get(ells[0])
         bin = BinMesh2SpectrumPoles(mattrs, edges=pole.edges('k'), ells=ells)
         # Get normalization from input power spectrum
-        norm = pole.values('norm')
+        norm = jnp.concatenate([spectrum.get(ell).values('norm') for ell in ells], axis=0)
         # Compute effective redshift
         zeff = compute_fkp_effective_redshift(*all_randoms, order=2, split=seed, fields=fields)
         results = {}
@@ -369,23 +371,23 @@ def compute_window_mesh2_spectrum(*get_data_randoms, spectrum, optimal_weights=N
         for scale in [1, 4]:
             mattrs2 = mattrs.clone(boxsize=scale * mattrs.boxsize)
             meshes = []
-            for iran, randoms in enumerate(split_particles([randoms.clone(attrs=mattrs2, exchange=True, backend='mpi') for randoms in all_randoms] + [None] * (2 - len(all_randoms)),
-                                                           seed=seed, fields=fields)):
-                alpha = pole.attrs[f'wsum_data{iran:d}'] / randoms.weights.sum()
+            for iran, randoms in enumerate(split_particles(all_randoms + [None] * (2 - len(all_randoms)), seed=seed, fields=fields)):
+                randoms = randoms.exchange()
+                alpha = pole.attrs[f'wsum_data{min(iran, len(all_randoms) - 1):d}'] / randoms.weights.sum()
                 meshes.append(alpha * randoms.paint(**kw_paint, out='real'))
             sbin = BinMesh2CorrelationPoles(mattrs2, edges=np.arange(0., mattrs2.boxsize.min() / 2., mattrs2.cellsize.min()), **kw, basis='bessel')
             correlation = jitted_compute_mesh2_correlation(meshes, bin=sbin, los=los).clone(norm=[np.mean(norm)] * len(sbin.ells))
             del meshes
-            window_correlation.insert(correlation, labels={'oells': tuple(ells), 'scale': scale})
+            window_correlation.insert(correlation, oells=tuple(ells), scale=scale)
             correlation = interpolate_window_function(correlation, coords=coords, order=3)
             correlations.append(correlation)
         limits = [0, 0.4 * mattrs.boxsize.min(), 2. * mattrs.boxsize.max()]
         weights = [jnp.maximum((coords >= limits[i]) & (coords < limits[i + 1]), 1e-10) for i in range(len(limits) - 1)]
         results['window_mesh2_correlation_raw'] = correlation = correlations[0].sum(correlations, weights=weights)
         window = compute_smooth2_spectrum_window(correlation, edgesin=edgesin, ellsin=ellsin, bin=bin, flags=('fftlog',))
-        observable = window.observable.map(lambda pole: pole.clone(norm=norm * np.ones_like(pole.values('norm')),
-                                                                   attrs=pole.attrs | dict(zeff=zeff)))
-        results['raw'] = window.clone(observable=observable, value=window.value / (norm[..., None] / np.mean(norm)))  # just in case norm is k-dependent
+        observable = window.observable.map(lambda pole, label: pole.clone(norm=spectrum.get(**label).values('norm'),
+                                                                   attrs=pole.attrs | dict(zeff=zeff)), input_label=True)
+        results['raw'] = window.clone(observable=observable, value=window.value() / (norm[..., None] / np.mean(norm)))  # just in case norm is k-dependent
         return results
 
     if optimal_weights is None:
@@ -396,17 +398,21 @@ def compute_window_mesh2_spectrum(*get_data_randoms, spectrum, optimal_weights=N
             if jax.process_index() == 0:
                 logger.info(f'Applying optimal weights for ell = {ell:d}')
 
-            fields = tuple(range(len(all_particles)))
+            fields = tuple(range(len(all_randoms)))
             fields = fields + (fields[-1],) * (2 - len(fields))
-            all_particles = tuple(all_particles) + (all_particles[-1],) * (2 - len(all_particles))
+            all_randoms = tuple(all_randoms) + (all_randoms[-1],) * (2 - len(all_randoms))
 
             def _get_optimal_weights(all_data):
                 # all_data is [data1, data2] or [randoms1, randoms2] or [shifted1, shifted2]
                 if all_data[0] is None:  # shifted is None, yield None
                     while True:
                         yield tuple(None for data in all_data)
+                def clone(data, weights):
+                    toret = data.clone(weights=weights)
+                    toret.__dict__.update(data.__dict__)  # to keep IDS
+                    return toret
                 for all_weights in optimal_weights(ell, [{'INDWEIGHT': data.weights} | {column: data.__dict__[column] for column in columns_optimal_weights} for data in all_data]):
-                    yield tuple(data.clone(weights=weights) for data, weights in zip(all_data, all_weights))
+                    yield tuple(clone(data, weights=weights) for data, weights in zip(all_data, all_weights))
 
             result_ell = {}
             for all_randoms in _get_optimal_weights(all_randoms):

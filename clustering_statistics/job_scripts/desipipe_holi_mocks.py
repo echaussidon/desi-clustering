@@ -59,9 +59,7 @@ def run_stats(tracer='LRG', version='holi-v1-altmtl', imocks=[451], stats_dir=Pa
             compute_stats_from_options(stats, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), cache=cache, **options)
         jax.experimental.multihost_utils.sync_global_devices('measurements')
         for region_comb, regions in tools.possible_combine_regions(regions).items():
-            _options_imock = dict(options)
-            _options_imock['catalog'] = _options_imock['catalog'] | dict(imock=imock)
-            combine_stats_from_options(stats, region_comb, regions, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), **_options_imock)
+            combine_stats_from_options(stats, region_comb, regions, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), **options)
     #jax.distributed.shutdown()
 
 
@@ -81,7 +79,7 @@ if __name__ == '__main__':
             rerun = []
             for zrange in tools.propose_fiducial('zranges', tracer):
                 for kind in ['mesh2_spectrum', 'mesh3_spectrum']:
-                    rexists, missing, unreadable = tools.checks_if_exists_and_readable(get_fn=functools.partial(tools.get_stats_fn, kind=kind, stats_dir=stats_dir, tracer=tracer, region='GCcomb', zrange=zrange, version=version), test_if_readable=True, imock=list(range(1001)))
+                    rexists, missing, unreadable = tools.checks_if_exists_and_readable(get_fn=functools.partial(tools.get_stats_fn, kind=kind, stats_dir=stats_dir, tracer=tracer, region='GCcomb', weight='default_FKP', zrange=zrange, version=version), test_if_readable=True, imock=list(range(1001)))
                     rerun += [imock for imock in imocks if (imock in unreadable[1]['imock']) or (imock not in rexists[1]['imock'])]
             imocks = sorted(set(rerun))
         batch_imocks = np.array_split(imocks, len(imocks) // 10) if len(imocks) else []

@@ -138,7 +138,7 @@ def _make_tuple(item, n=None):
     return item
 
 
-def compute_fiducial_selection_weights(catalog, stat='mesh3_spectrum'):
+def compute_fiducial_selection_weights(catalog, stat='mesh3_spectrum', tracer=None):
     """
     Apply fiducial selection weight to the catalog based on the statistic being computed.
     For the bispectrum (mesh3), the individual weights are scaled by NX^(-1/3) to make the
@@ -183,13 +183,13 @@ def compute_fiducial_png_weights(ell, catalog, tracer='LRG', p=1.):
 
     def _get_weights(catalogs, tracers, ps):
         wtilde = bias(catalogs[0]['Z'], tracer=tracers[0]) - ps[0]
-        w0 = growth_factor(catalogs[0]['Z']) * (bias(catalogs[1]['Z'], tracer=tracers[1]) + growth_rate(catalogs[1]['Z']) / 3)
+        w0 = growth_factor(catalogs[1]['Z']) * (bias(catalogs[1]['Z'], tracer=tracers[1]) + growth_rate(catalogs[1]['Z']) / 3)
         w2 = 2 / 3 * growth_factor(catalogs[1]['Z']) * growth_rate(catalogs[1]['Z'])
         return catalogs[0]['INDWEIGHT'] * wtilde, catalogs[1]['INDWEIGHT'] * {0: w0, 2: w2}[ell]
 
     yield _get_weights(catalogs, tracers, ps)
     if tracers[1] != tracers[0]:
-        yield _get_weights(catalogs[::-1], tracers[::-1], ps[::-1])
+        yield _get_weights(catalogs[::-1], tracers[::-1], ps[::-1])[::-1]
 
 
 def propose_fiducial(kind, tracer, zrange=None, analysis='full_shape'):
@@ -250,25 +250,23 @@ def propose_fiducial(kind, tracer, zrange=None, analysis='full_shape'):
 def _unzip_catalog_options(catalog):
     """From a catalog dictionary with nran, zrange, ..., tracer, return {tracer: {nran:..., zrange: ...}}"""
     if 'tracer' in catalog:
-        toret = {}
-        tracer = catalog['tracer']
-        tracers = tuple(tracer) if not isinstance(tracer, str) else (tracer,)
-        toret = {tracer: dict(catalog) for tracer in tracers}
+        tracers = _make_tuple(catalog['tracer'])
+        toret = {tracer: dict(catalog) | dict(tracer=tracer) for tracer in tracers}
     else:
-        return dict(catalog)
+        toret = dict(catalog)
+    return toret
 
 
 def _zip_catalog_options(catalog, squeeze=True):
     """From {tracer: {nran:..., zrange: ...}}, return {tracer: tuple or single tracer if same, nran: tuple or single number if same}"""
-    toret = {}
     tracers = tuple(catalog.keys())
-    toret.update({key: []} for tracer in catalog for key in catalog[tracer])
+    toret = {key: [] for tracer in tracers for key in catalog[tracer]}
     for tracer in tracers:
         for key in toret:
             value = catalog[tracer].get(key, None)
             if value not in toret[key]:
                 toret[key].append(value)
-    toret = {key: tuple(value) if squeeze and len(value) > 1 else value[0] for key, value in toret.items()}
+    toret = {key: tuple(value) if len(value) > 1 or not squeeze else value[0] for key, value in toret.items()}
     toret['tracer'] = tracers
     return toret
 
@@ -279,7 +277,7 @@ def fill_fiducial_options(kwargs, analysis='full_shape'):
     mattrs = options.pop('mattrs', {})
     options['catalog'] = _unzip_catalog_options(options['catalog'])
     tracers = tuple(options['catalog'].keys())
-    for tracer in tracer:
+    for tracer in tracers:
         fiducial_options = propose_fiducial('catalog', tracer=tracer, analysis=analysis)
         options['catalog'][tracer] = fiducial_options | options['catalog'][tracer]
     recon_options = options.pop('recon', {})
@@ -289,12 +287,12 @@ def fill_fiducial_options(kwargs, analysis='full_shape'):
         fiducial_options = propose_fiducial('recon', tracer=tracer, analysis=analysis)
         options['recon'][tracer] = fiducial_options | recon_options.get(tracer, recon_options)
         if mattrs: options['recon'][tracer]['mattrs'] = mattrs
-        options['recon'][tracer]['nran'] = options['recon'][tracer].get('nran', options['catalog']['nran'])
-        assert options['recon'][tracer]['nran'] >= options['catalog']['nran'], 'must use more randoms for reconstruction than clustering measurements'
+        options['recon'][tracer]['nran'] = options['recon'][tracer].get('nran', options['catalog'][tracer]['nran'])
+        assert options['recon'][tracer]['nran'] >= options['catalog'][tracer]['nran'], 'must use more randoms for reconstruction than clustering measurements'
     for recon in ['', 'recon_']:
         for stat in ['particle2_correlation', 'mesh2_spectrum', 'mesh3_spectrum']:
             stat = f'{recon}{stat}'
-            fiducial_options = propose_fiducial(stat, tracer=join_tracers(tracers), analysis=analysis)
+            fiducial_options = propose_fiducial(stat, tracer=tracers, analysis=analysis)
             options[stat] = fiducial_options | options.get(stat, {})
             if 'mesh' in stat:
                 if mattrs: options[stat]['mattrs'] = mattrs
@@ -458,40 +456,55 @@ def get_stats_fn(stats_dir=Path(os.getenv('SCRATCH')) / 'measurements', kind='me
         Measurement filename(s).
         Multiple filenames are returned as a list when imock is '*'.
     """
+    _default_options = dict(version=None, tracer=None, region=None, zrange=None, weight=None, imock=None)
     catalog_options = kwargs.get('catalog', {})
     if not catalog_options:
-        _default_options = dict(version=None, tracer='LRG', region='NGC', zrange=None, weight='default_FKP', imock=0)
-        catalog_options.update({key: kwargs.get(value, _default_options[key]) for key, value in _default_options.items()})
-    catalog_options = _zip_catalog_options(_unzip_catalog_options(catalog_options), squeeze=False)
-    if imock == '*':
-        fns = [get_stats_fn(stats_dir=stats_dir, kind=kind, auw=auw, cut=cut, ext=ext, catalog=catalog_options) for imock in range(1000)]
-        return [fn for fn in fns if os.path.exists(fn)]
-    if cut: cut = '_thetacut'
-    else: cut = ''
-    if auw: auw = '_auw'
-    else: auw = ''
-    stats_dir = Path(stats_dir)
-    if catalog_options.get('version', None) is not None:
-        stats_dir = stats_dir / join_tracers(catalog_options('version'))
-    imock = ''
-    if catalog_options.get('imock', None) is not None:
-        imock = join_tracers(tuple(f'_{imock:d}' for imock in catalog_options['imock']))
-    if extra:
-        extra = f'_{extra}'
-    tracer = join_tracers(catalog_options['tracer'])
-    region = join_tracers(catalog_options['region'])
-    weight = join_tracers(catalog_options['weight'])
-
-    if zrange is not None:
-        zrange = join_tracers(tuple(f'_z{zrange[0]:.1f}-{zrange[1]:.1f}' for zrange in catalog_options['zrange']))
+        catalog_options = {key: kwargs.get(key, _default_options[key]) for key, value in _default_options.items()}
+        catalog_options = _unzip_catalog_options(catalog_options)
     else:
-        zrange = ''
+        catalog_options = _unzip_catalog_options(catalog_options)
+        _default_options.pop('tracer')
+        catalog_options = {tracer: _default_options | catalog_options[tracer] for tracer in catalog_options}
+    catalog_options = _zip_catalog_options(catalog_options, squeeze=False)
+    imock = catalog_options['imock']
+    if imock[0] and imock[0] == '*':
+        fns = [get_stats_fn(stats_dir=stats_dir, kind=kind, auw=auw, cut=cut, ext=ext, catalog=catalog_options, **kwargs) for imock in range(1000)]
+        return [fn for fn in fns if os.path.exists(fn)]
+
+    stats_dir = Path(stats_dir)
+
+    def join_if_not_none(f, key):
+        items = catalog_options[key]
+        if any(item is not None for item in items):
+            return join_tracers(tuple(f(item) for item in items if item is not None))
+        return ''
+
+    def check_is_not_none(key):
+        items = catalog_options[key]
+        assert all(item is not None for item in items), f'provide {key}'
+        return items
+
+    version = join_if_not_none(str, 'version')
+    if version: stats_dir = stats_dir / version
+    tracer = join_tracers(check_is_not_none('tracer'))
+    zrange = join_if_not_none(lambda zrange: f'z{zrange[0]:.1f}-{zrange[1]:.1f}', 'zrange')
+    zrange = f'_{zrange}' if zrange else ''
+    region = join_tracers(check_is_not_none('region'))
+    weight = join_tracers(check_is_not_none('weight'))
+    auw = '_auw' if auw else ''
+    cut = '_thetacut' if cut else ''
+    extra = f'_{extra}' if extra else ''
+    imock = join_if_not_none(str, 'imock')
+    imock = f'_{imock}' if imock else ''
     corr_type = 'smu'
     battrs = kwargs.get('battrs', None)
     if battrs is not None: corr_type = ''.join(list(battrs))
     kind = {'mesh2_spectrum': 'mesh2_spectrum_poles',
-            'mesh3_spectrum': 'mesh3_spectrum_poles',
             'particle2_correlation': f'particle2_correlation_{corr_type}'}.get(kind, kind)
+    if 'mesh3' in kind:
+        basis = kwargs.get('basis', None)
+        basis = f'_{basis}' if basis else ''
+        kind = f'mesh3_spectrum{basis}_poles'
     basename = f'{kind}_{tracer}{zrange}_{region}_{weight}{auw}{cut}{extra}{imock}.{ext}'
     return stats_dir / basename
 
@@ -932,7 +945,7 @@ def read_full_catalog(kind, wntile=None, concatenate=True,
         return rdw
 
 
-def write_summary_statistics(fn, stats):
+def write_stats(fn, stats):
     """Write summary statistics to file from process 0 only."""
     import jax
     if jax.process_index() == 0:

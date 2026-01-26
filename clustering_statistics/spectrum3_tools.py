@@ -51,14 +51,15 @@ def compute_mesh3_spectrum(*get_data_randoms, mattrs=None,
 
     all_particles = prepare_jaxpower_particles(*get_data_randoms, mattrs=mattrs, add_randoms=['IDS'])
     attrs = _get_jaxpower_attrs(*all_particles)
+    attrs.update(los=los)
     mattrs = all_particles[0][0].attrs
     # Define the binner
     if cache is None: cache = {}
-    bin = cache.get('bin_mesh3_spectrum', None)
-    if edges is None: edges = {'step': 0.01 if 'scoccimarro' in basis else 0.005}
+    bin = cache.get(f'bin_mesh3_spectrum_{basis}', None)
+    if edges is None: edges = {'step': 0.02 if 'scoccimarro' in basis else 0.005}
     if bin is None or not np.all(bin.mattrs.meshsize == mattrs.meshsize) or not np.allclose(bin.mattrs.boxsize, mattrs.boxsize):
         bin = BinMesh3SpectrumPoles(mattrs, edges=edges, basis=basis, ells=ells, buffer_size=buffer_size)
-    cache.setdefault('bin_mesh3_spectrum', bin)
+    cache.setdefault(f'bin_mesh3_spectrum_{basis}', bin)
 
     # Computing normalization
     all_fkp = [FKPField(data, randoms) for (data, randoms, _) in all_particles]
@@ -83,7 +84,9 @@ def compute_mesh3_spectrum(*get_data_randoms, mattrs=None,
 
     # out='real' to save memory
     spectrum = jitted_compute_mesh3_spectrum(*meshes, los=los, bin=bin)
-    spectrum = spectrum.clone(norm=norm, num_shotnoise=num_shotnoise, attrs=attrs)
+    spectrum = spectrum.clone(norm=norm, num_shotnoise=num_shotnoise)
+    spectrum = spectrum.map(lambda pole: pole.clone(attrs=attrs))
+    spectrum = spectrum.clone(attrs=attrs)
 
     jax.block_until_ready(spectrum)
     if jax.process_index() == 0:
@@ -118,23 +121,26 @@ def compute_window_mesh3_spectrum(*get_data_randoms, spectrum, ibatch: tuple=Non
     """
     # FIXME: data is not used, could be dropped, add auw
     from jaxpower import (BinMesh3SpectrumPoles, BinMesh3CorrelationPoles, compute_mesh3_correlation,
-                           compute_smooth3_spectrum_window, get_smooth3_window_bin_attrs, interpolate_window_function, split_particles, compute_fkp_effective_redshift)
-
+                           compute_smooth3_spectrum_window, get_smooth3_window_bin_attrs, interpolate_window_function, split_particles)
     ells = spectrum.ells
     mattrs = {name: spectrum.attrs[name] for name in ['boxsize', 'boxcenter', 'meshsize']}
+    buffer_size = 40  # CHANGE
+    mattrs['meshsize'] = 200  # CHANGE
     los = spectrum.attrs['los']
     kw_paint = dict(resampler='tsc', interlacing=3, compensate=True)
 
     all_particles = prepare_jaxpower_particles(*get_data_randoms, mattrs=mattrs, add_randoms=['IDS'])
     all_randoms = [particles[1] for particles in all_particles]
     del all_particles
+    mattrs = all_randoms[0].attrs
 
     pole = next(iter(spectrum))
-    ells, norm, edges, basis = spectrum.ells, pole.values('norm'), pole.edges('k'), pole.basis
-    _, index = np.unique(pole.coords('k', center='mid')[..., 0], return_index=True)
+    ells, edges, basis = spectrum.ells, pole.edges('k'), pole.basis
+    norm = jnp.concatenate([spectrum.get(ell).values('norm') for ell in spectrum.ells])
+    k, index = np.unique(pole.coords('k', center='mid_if_edges')[..., 0], return_index=True)
     edges = edges[index, 0]
     edges = np.insert(edges[:, 1], 0, edges[0, 0])
-    bin = BinMesh3SpectrumPoles(mattrs, edges=edges, ells=ells, basis=basis, mask_edges='')
+    bin = BinMesh3SpectrumPoles(mattrs, edges=edges, ells=ells, basis=basis, mask_edges='')   # mask_edges useless if cellsize is large enough
     stop = bin.edges1d[0].max()
     step = np.diff(bin.edges1d[0], axis=-1).min()
     edgesin = np.arange(0., 1.5 * stop, step / 2.)
@@ -149,7 +155,7 @@ def compute_window_mesh3_spectrum(*get_data_randoms, spectrum, ibatch: tuple=Non
     kw, ellsin = get_smooth3_window_bin_attrs(ells, ellsin=2, fields=fields, return_ellsin=True)
     jitted_compute_mesh3_correlation = jax.jit(compute_mesh3_correlation, static_argnames=['los'], donate_argnums=[0])
 
-    coords = jnp.logspace(-3, 5, 4 * 1024)
+    coords = jnp.logspace(-3, 5, 1024)
     scales = [1, 4]
     b, c = mattrs.boxsize.min(), mattrs.cellsize.min()
     edges = [np.concatenate([np.arange(11) * c, np.arange(11 * c, 0.3 * b, 4 * c)]),
@@ -162,13 +168,17 @@ def compute_window_mesh3_spectrum(*get_data_randoms, spectrum, ibatch: tuple=Non
     if ells and not bool(computed_batches):
         # multigrid calculation
         for scale, edges in zip(scales, edges):
+            edges = edges[:40]   # CHANGE
+            if jax.process_index() == 0:
+                logger.info(f'Processing scale x{scale:.0f}')
             mattrs2 = mattrs.clone(boxsize=scale * mattrs.boxsize)
             kw_paint = dict(resampler='tsc', interlacing=3, compensate=True)
             sbin = BinMesh3CorrelationPoles(mattrs2, edges=edges, **kw, buffer_size=buffer_size)  # kcut=(0., mattrs2.knyq.min()))
             meshes = []
-            for iran, randoms in enumerate(split_particles([randoms.clone(attrs=mattrs2, exchange=True, backend='mpi') for randoms in all_randoms] + [None] * (3 - len(all_randoms)),
-                                                            seed=seed, fields=fields)):
-                    alpha = pole.attrs[f'wsum_data{iran:d}'] / randoms.weights.sum()
+            for iran, randoms in enumerate(split_particles(all_randoms + [None] * (3 - len(all_randoms)),
+                                                           seed=seed, fields=fields)):
+                    randoms = randoms.exchange()
+                    alpha = pole.attrs[f'wsum_data{min(iran, len(all_randoms) - 1):d}'] / randoms.weights.sum()
                     meshes.append(alpha * randoms.paint(**kw_paint, out='real'))
             correlation = jitted_compute_mesh3_correlation(meshes, bin=sbin, los=los).clone(norm=[np.mean(norm)] * len(sbin.ells))
             correlation = interpolate_window_function(correlation.unravel(), coords=coords, order=3)
@@ -184,12 +194,17 @@ def compute_window_mesh3_spectrum(*get_data_randoms, spectrum, ibatch: tuple=Non
         correlation = types.join(computed_batches)
         correlation = types.join([correlation.get(ells=[ell]) for ell in ells])  # reorder
 
+    jax.block_until_ready(correlation)
+    if jax.process_index() == 0:
+        logger.info('Window functions computed.')
+
     results = {}
     results['window_mesh3_correlation_raw'] = correlation
     if ibatch is None:
-        window = compute_smooth3_spectrum_window(correlation, edgesin=edgesin, ellsin=ellsin, bin=bin, flags=('fftlog',))
-        observable = window.observable.map(lambda pole: pole.clone(norm=norm * np.ones_like(pole.values('norm')),
-                                                                    attrs=pole.attrs | dict(zeff=zeff)))
-        window = window.clone(observable=observable, value=window.value / (norm[..., None] / np.mean(norm)))  # just in case norm is k-dependent
+        if jax.process_index() == 0:
+            logger.info('Building window matrix.')
+        window = compute_smooth3_spectrum_window(correlation, edgesin=edgesin, ellsin=ellsin, bin=bin, flags=('fftlog',), batch_size=4)
+        observable = window.observable.map(lambda pole, label: pole.clone(norm=spectrum.get(**label).values('norm'), attrs=pole.attrs | dict(zeff=zeff)), input_label=True)
+        window = window.clone(observable=observable, value=window.value() / (norm[..., None] / np.mean(norm)))  # just in case norm is k-dependent
         results['raw'] = window
     return results
