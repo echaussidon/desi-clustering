@@ -927,7 +927,7 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
         raise IOError(f'Catalogs {[fn for ex, fn in exists.items() if not ex]} do not exist!')
 
     if kind == 'randoms' and isinstance(expand, dict):
-        from_data = expand.get('from_data', ['Z'])
+        from_data = expand.get('from_data', ['Z','WEIGHT_SYS'])
         from_randoms = expand.get('from_randoms', ['RA', 'DEC'])
         parent_randoms_fn = expand['parent_randoms_fn']
         if not isinstance(parent_randoms_fn, (tuple, list)):
@@ -958,7 +958,7 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
             catalog = _read_catalog(fn, mpicomm=MPI.COMM_SELF)
             if expand is not None:
                 catalog = expand(catalog, ifn)
-            columns = ['RA', 'DEC', 'Z', 'WEIGHT', 'WEIGHT_COMP', 'WEIGHT_FKP', 'BITWEIGHTS', 'FRAC_TLOBS_TILES', 'NTILE', 'NX', 'TARGETID']
+            columns = ['RA', 'DEC', 'Z', 'WEIGHT', 'WEIGHT_COMP', 'WEIGHT_FKP', 'WEIGHT_SYS', 'BITWEIGHTS', 'FRAC_TLOBS_TILES', 'NTILE', 'NX', 'TARGETID']
             columns = [column for column in columns if column in catalog.columns()]
             catalog = catalog[columns]
             if zrange is not None:
