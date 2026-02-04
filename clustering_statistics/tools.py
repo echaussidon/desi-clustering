@@ -255,7 +255,7 @@ def propose_fiducial(kind, tracer, zrange=None, analysis='full_shape'):
     tracer : str
         Tracer name. Options are 'BGS', 'LRG', 'ELG', 'LRG+ELG', 'QSO'.
     zrange : tuple, optional
-        Redshift range. If provided, it will override the default zranges.
+        Redshift range. If provided, it will override the default zrange.
 
     Returns
     -------
@@ -275,7 +275,7 @@ def propose_fiducial(kind, tracer, zrange=None, analysis='full_shape'):
     tracer = get_simple_tracer(tracer)
     propose_fiducial = base | propose_fiducial[tracer]
     if 'png' in analysis:
-        propose_weight = 'default' # FKP weights are redundant when using OQE weights
+        propose_weight = 'default-oqe' # use OQE weights by default
         propose_zranges = {'BGS': [(0.1, 0.4)], 'LRG': [(0.4, 1.1)], 'ELG': [(0.8, 1.6)], 'LRG+ELG': [(0.8, 1.1)], 'QSO': [(0.8, 3.5)]}
         propose_FKP_P0 = {'LRG': 5e4, 'ELG': 2e4, 'QSO': 3e4}
         propose_meshsizes = {'BGS': 700, 'LRG': 700, 'ELG': 700, 'LRG+ELG': 700, 'QSO': 700}
