@@ -80,20 +80,21 @@ if __name__ == '__main__':
     # imocks2run = np.arange(100,100+1)
 
     analysis = 'png_local'
+    tracers = ['LRG', 'ELG_LOPnotqso', 'QSO']
     weights = ['default-noimsys-oqe','default-oqe']
 
     stats_dir = Path(f'/global/cfs/cdirs/desi/mocks/cai/LSS/DA2/mocks/desipipe/{analysis}/')
     # stats_dir = Path(os.getenv('SCRATCH')) / 'glam-uchuu_mocks_validation' 
     version = 'glam-uchuu-v1-altmtl'
 
-    for tracer in ['LRG', 'ELG_LOPnotqso', 'QSO']:
+    for tracer in tracers:
         for weight in weights:
             if True:
                 exists, missing = tools.checks_if_exists_and_readable(get_fn=functools.partial(tools.get_catalog_fn, tracer=tracer, region='NGC', version=version), test_if_readable=False, imock=imocks2run)[:2]
                 imocks = exists[1]['imock']
                 rerun = []
                 for zrange in tools.propose_fiducial('zranges', tracer, analysis=analysis):
-                    for kind in ['mesh2_spectrum', 'mesh3_spectrum']:
+                    for kind in stats:
                         rexists, missing, unreadable = tools.checks_if_exists_and_readable(get_fn=functools.partial(tools.get_stats_fn, kind=kind, stats_dir=stats_dir, tracer=tracer, region='GCcomb', weight=weight, zrange=zrange, version=version), test_if_readable=True, imock=imocks2run)
                         rerun += [imock for imock in imocks if (imock in unreadable[1]['imock']) or (imock not in rexists[1]['imock'])]
                 imocks = sorted(set(rerun))
