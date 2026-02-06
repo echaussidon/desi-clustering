@@ -1,7 +1,7 @@
 """
 salloc -N 1 -C gpu -t 02:00:00 --gpus 4 --qos interactive --account desi_g
 source /global/common/software/desi/users/adematti/cosmodesi_environment.sh main
-srun -n 4 python run_abacushf_cubic.py
+srun python run_abacushf_cubic.py
 """
 import os
 import sys
@@ -103,7 +103,7 @@ def run_task(task: Task, todo: set[str], spectrum_args: dict, overwrite: bool = 
         if not _maybe_skip(out_fn, overwrite):
             with create_sharding_mesh():
                 spectrum = compute_box_mesh2_spectrum(
-                    get_data, get_shifted=GET_SHIFTED, cache=cache, **spectrum_args
+                    get_data, get_shifted=GET_SHIFTED, cache=cache, los=task.los, **spectrum_args
                 )
                 if out_fn is not None and jax.process_index() == 0:
                     logger.info(f'Writing to {out_fn}')
@@ -116,7 +116,7 @@ def run_task(task: Task, todo: set[str], spectrum_args: dict, overwrite: bool = 
         if not _maybe_skip(out_fn, overwrite):
             with create_sharding_mesh():
                 spectrum = compute_box_mesh3_spectrum(
-                    get_data, get_shifted=GET_SHIFTED, cache=cache, **bargs
+                    get_data, get_shifted=GET_SHIFTED, cache=cache , los=task.los, **bargs
                 )
                 if out_fn is not None and jax.process_index() == 0:
                     logger.info(f'Writing to {out_fn}')
