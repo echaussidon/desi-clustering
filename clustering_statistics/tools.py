@@ -774,6 +774,9 @@ def _format_bitweights(bitweights):
 @default_mpicomm
 def _read_catalog(fn, mpicomm=None, **kwargs):
     """Wrapper around :meth:`Catalog.read` to read catalog(s)."""
+    import numpy as np
+    from mockfactory import Catalog
+    import warnings
     one_fn = fn[0] if isinstance(fn, (tuple, list)) else fn
     if str(one_fn).endswith('.h5'): 
         try:
@@ -890,7 +893,7 @@ def expand_randoms(randoms, parent_randoms, data, from_randoms=('RA', 'DEC'), fr
     randoms : Catalog
         Expanded randoms catalog.
     """
-    
+    import numpy as np
     if len(from_randoms) != 0:
         _, randoms_index, parent_index = np.intersect1d(randoms['TARGETID'], parent_randoms['TARGETID'], return_indices=True)
         randoms = randoms[randoms_index]
@@ -1243,7 +1246,7 @@ def combine_stats(observables):
     return observable
 
 
-def merge_catalogs(output, inputs, factor=1., seed=42, **kwargs):
+def merge_catalogs(output, inputs, factor=1., seed=42, read_catalog=_read_catalog, **kwargs):
     import numpy as np
     from mockfactory import Catalog
     inputs = list(inputs)
@@ -1255,7 +1258,7 @@ def merge_catalogs(output, inputs, factor=1., seed=42, **kwargs):
     from pyrecon.utils import MemoryMonitor
     with MemoryMonitor() as mem:
         for fn in inputs:
-            catalog = _read_catalog(fn, **kwargs)
+            catalog = read_catalog(fn, **kwargs)
             mask = rng.uniform(0., 1., catalog.size) < factor / ncatalogs
             catalog.get(catalog.columns())
             columns = [col for col in columns if col in catalog.columns()]
@@ -1265,9 +1268,21 @@ def merge_catalogs(output, inputs, factor=1., seed=42, **kwargs):
     catalog.write(output)
 
 
-def merge_randoms_catalogs(output, inputs, factor=1., seed=42, expand=None, **kwargs):
+def merge_randoms_catalogs(output, inputs, parent_randoms_fn=None, factor=1., seed=42,
+                           read_catalog=_read_catalog, expand_randoms=expand_randoms, **kwargs):
     import numpy as np
     from mockfactory import Catalog
+
+    if parent_randoms_fn is not None:
+        parent_randoms = read_catalog(parent_randoms_fn)
+        def expand(catalog):
+            catalog = expand_randoms(catalog, parent_randoms=parent_randoms, data=None, from_randoms=('RA','DEC'), from_data=())
+            if catalog.csize == 0:
+                raise ValueError(f'Catalog size after expansion is {catalog.csize}')
+            return catalog
+    else: 
+        expand = None
+            
     inputs = list(inputs)
     ncatalogs = len(inputs)
     rng = np.random.RandomState(seed=seed)
@@ -1286,7 +1301,7 @@ def merge_randoms_catalogs(output, inputs, factor=1., seed=42, expand=None, **kw
     with MemoryMonitor() as mem:
         for ifn, fn in enumerate(inputs):
             print(ifn,fn)
-            catalog =  _read_catalog(fn, **kwargs)
+            catalog = read_catalog(fn, **kwargs)
             catalog.get(catalog.columns())
             if expand is not None:
                 print(f'Expanding {fn}')

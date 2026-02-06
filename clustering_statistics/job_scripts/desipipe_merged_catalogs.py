@@ -37,25 +37,18 @@ tm = tm.clone(scheduler=dict(max_workers=30),
                             output=output, error=error, stop_after=1, constraint='cpu'))
 
 @tm.python_app
-def merge_catalogs(output, inputs, merge_catalogs=tools.merge_catalogs, **kwargs):
+def merge_catalogs(output, inputs, merge_catalogs=tools.merge_catalogs, read_catalog=tools._read_catalog, **kwargs):
     from mockfactory import setup_logging
     setup_logging()
     merge_catalogs(output, inputs, **kwargs)
 
 
 @tm.python_app
-def merge_randoms_catalogs(output, inputs, parent_randoms_fn=None, merge_catalogs=tools.merge_randoms_catalogs, **kwargs):
+def merge_randoms_catalogs(output, inputs, parent_randoms_fn=None, merge_catalogs=tools.merge_randoms_catalogs, 
+                           read_catalog=tools._read_catalog, expand_randoms=tools.expand_randoms, **kwargs):
     from mockfactory import setup_logging
-    from clustering_statistics import tools
     setup_logging()
-    if parent_randoms_fn is not None:
-        parent_randoms = tools._read_catalog(parent_randoms_fn)
-        def expand(catalog):
-            catalog = expand_randoms(catalog, parent_randoms=parent_randoms, data=None, from_randoms=('RA','DEC'), from_data=())
-            if catalog.csize == 0:
-                raise ValueError(f'Catalog size after expansion is {catalog.csize}')
-            return catalog
-    merge_catalogs(output, inputs, **kwargs)
+    merge_catalogs(output, inputs, parent_randoms_fn=parent_randoms_fn, **kwargs)
 
 
 if __name__ == '__main__':
@@ -64,12 +57,12 @@ if __name__ == '__main__':
     # mode = 'interactive'
 
     version = 'glam-uchuu-v1-altmtl'
-    # out_dir = Path(f'/global/cfs/cdirs/desi/mocks/cai/LSS/DA2/mocks/desipipe/{analysis}/')
-    out_dir = Path(os.getenv('SCRATCH')) / 'cai-dr2-benchmarks' / version / 'merged' # / '{noric or ric}'
+    out_dir = Path('/global/cfs/cdirs/desi/mocks/cai/LSS/DA2/mocks/desipipe/') / version / 'merged'
+    # out_dir = Path(os.getenv('SCRATCH')) / 'cai-dr2-benchmarks' / version / 'merged' # / '{noric or ric}'
     
     kinds = ['data','single_randoms']
-    # tracers = ['LRG', 'ELG_LOPnotqso', 'QSO']
-    tracers = ['QSO']
+    tracers = ['LRG', 'ELG_LOPnotqso', 'QSO']
+    # tracers = ['QSO']
     regions = ['NGC', 'SGC']
     imocks = np.arange(100,150+1) # in this it is the number of mocks to merge
     nran_list = np.arange(18) # randoms to process
@@ -104,5 +97,4 @@ if __name__ == '__main__':
                         output_randoms_fn = tools.get_catalog_fn(kind=kind, cat_dir=out_dir, nran=inran, **catalog_kws)
                         
                         merge_randoms_catalogs(output_randoms_fn, input_randoms_fns, parent_randoms_fn=parent_randoms_fn, factor=factor)
-                        # merge_randoms_catalogs(output_randoms_fn, input_randoms_fns, factor=factor, expand=expand)
                     
