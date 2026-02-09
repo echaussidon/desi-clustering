@@ -3,10 +3,10 @@ Script to create and spawn desipipe tasks to compute clustering measurements on 
 To create and spawn the tasks on NERSC, use the following commands:
 ```bash
 source /global/common/software/desi/users/adematti/cosmodesi_environment.sh main
-python desipipe_glam-uchuu_mocks.py  # create the list of tasks
-desipipe tasks -q glam-uchuu_mocks   # check the list of tasks
-desipipe spawn -q glam-uchuu_mocks --spawn  # spawn the jobs
-desipipe queues -q glam-uchuu_mocks  # check the queue
+python desipipe_glam-uchuu_mocks.py         # create the list of tasks
+desipipe tasks  -q glam-uchuu_mocks         # check the list of tasks
+desipipe spawn  -q glam-uchuu_mocks --spawn # spawn the jobs
+desipipe queues -q glam-uchuu_mocks         # check the queue
 ```
 """
 import os
@@ -48,16 +48,19 @@ def run_stats(tracer='LRG', version='glam-uchuu-v1-altmtl', imocks=[100], stats_
     except RuntimeError: print('Distributed environment already initialized')
     else: print('Initializing distributed environment')
     from clustering_statistics import tools, setup_logging, compute_stats_from_options, combine_stats_from_options, fill_fiducial_options
-
+        
     setup_logging()
     cache = {}
+    regions = ['NGC', 'SGC']
     zranges = tools.propose_fiducial('zranges', tracer, analysis=analysis)
     for imock in imocks:
-        regions = ['NGC', 'SGC']
         for region in regions:
-            # options = dict(catalog=dict(version=version, tracer=tracer, zrange=zranges, region=region, imock=imock), mesh2_spectrum={'cut': True, 'auw': True})
+            if analysis == 'full_shape':
+                mesh2_spectrum = {'cut': True, 'auw': True}
+            elif analysis == 'png_local':
+                mesh2_spectrum = dict(optimal_weights=functools.partial(tools.compute_fiducial_png_weights, tracer=tracer) if 'oqe' in weight else None)
             options = dict(catalog=dict(version=version, tracer=tracer, zrange=zranges, region=region, imock=imock, weight=weight), 
-                           mesh2_spectrum=dict(optimal_weights=functools.partial(tools.compute_fiducial_png_weights, tracer=tracer) if 'oqe' in weight else None))
+                           mesh2_spectrum=mesh2_spectrum)
             options = fill_fiducial_options(options,analysis=analysis)
             for tracer in options['catalog']:
                 options['catalog'][tracer]['expand'] = {'parent_randoms_fn': tools.get_catalog_fn(kind='parent_randoms', version='data-dr2-v2', tracer=tracer, nran=options['catalog'][tracer]['nran'])}
@@ -73,18 +76,25 @@ if __name__ == '__main__':
     mode = 'slurm'
     # mode = 'interactive'
     
-    # stats = ['mesh2_spectrum', 'mesh3_spectrum']
-    stats = ['mesh2_spectrum']
-    
     imocks2run = np.arange(100,150+1)
     # imocks2run = np.arange(100,100+1)
 
-    analysis = 'png_local'
+    # analysis = 'png_local'
+    analysis = 'full_shape'
+    
     tracers = ['LRG', 'ELG_LOPnotqso', 'QSO']
-    weights = ['default-noimsys-oqe','default-oqe']
 
-    stats_dir = Path(f'/global/cfs/cdirs/desi/mocks/cai/LSS/DA2/mocks/desipipe/{analysis}/')
-    # stats_dir = Path(os.getenv('SCRATCH')) / 'glam-uchuu_mocks_validation' 
+    if analysis == 'full_shape':
+        stats   = ['mesh2_spectrum', 'mesh3_spectrum']
+        weights = ['default-noimsys-FKP','default-FKP']
+    elif analysis == 'png_local':
+        stats   = ['mesh2_spectrum']
+        weights = ['default-noimsys-oqe','default-oqe']
+    else:
+        raise ValueError(f'{analysis} not supported.')
+
+    stats_dir = Path(f'/global/cfs/cdirs/desi/mocks/cai/LSS/DA2/mocks/desipipe/') / analysis
+    # stats_dir = Path(os.getenv('SCRATCH')) / 'glam-uchuu_mocks_validation' / analysis
     version = 'glam-uchuu-v1-altmtl'
 
     for tracer in tracers:
