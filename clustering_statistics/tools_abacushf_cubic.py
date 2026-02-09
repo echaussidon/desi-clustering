@@ -317,6 +317,7 @@ def get_clustering_positions_weights(fn, los="z", **kwargs):
 
     catalog = None
     boxsize, scalev = None, None
+    zsnap = kwargs.get('zsnap', None)
 
     if mpicomm.rank == mpiroot:
         kwargs = dict()
