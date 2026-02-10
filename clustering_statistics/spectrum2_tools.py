@@ -535,7 +535,7 @@ def compute_box_mesh2_spectrum(get_data, get_shifted=None, ells=(0, 2, 4), los='
     return spectrum
 
 
-def compute_box_mesh2_cross_spectrum(get_data, get_data2, ells=(0, 2, 4), los='z', cache=None, **attrs):
+def compute_box_mesh2_cross_spectrum(get_data, get_data2, get_shifted=None, get_shifted2=None, ells=(0, 2, 4), los='z', cache=None, **attrs):
     """
     Compute the 2-point cross-spectrum multipoles between two fields in a cubic box using :mod:`jaxpower`.
 
@@ -570,8 +570,12 @@ def compute_box_mesh2_cross_spectrum(get_data, get_data2, ells=(0, 2, 4), los='z
     data = ParticleField(*get_data(), attrs=mattrs, exchange=True, backend='jax')
     kw = {}
     kw['wsum_data1'] = data.sum()
+    if get_shifted is not None:
+        data = FKPField(data, ParticleField(*get_shifted(), attrs=mattrs, exchange=True, backend='jax'))
     data2 = ParticleField(*get_data2(), attrs=mattrs, exchange=True, backend='jax')
     kw['wsum_data2'] = data2.sum()
+    if get_shifted2 is not None:
+        data2 = FKPField(data2, ParticleField(*get_shifted2(), attrs=mattrs, exchange=True, backend='jax'))
     norm = compute_box2_normalization(data, data2, bin=bin)
     jax.block_until_ready(norm)
     if jax.process_index() == 0:
@@ -589,3 +593,4 @@ def compute_box_mesh2_cross_spectrum(get_data, get_data2, ells=(0, 2, 4), los='z
     jax.block_until_ready(spectrum)
     if jax.process_index() == 0:
         logger.info('Mesh-based computation finished')
+    return spectrum

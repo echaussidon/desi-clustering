@@ -704,10 +704,8 @@ def get_box_stats_fn(stats_dir='/global/cfs/cdirs/desi/science/gqc/y3_fits/mockc
         Cosmology label (e.g., 'c000').
     zrange : tuple, optional
         Redshift range of interest. This will be mapped to a specific box snapshot.
-    box_type : str, optional
-        Type of box (e.g., 'base'). Default is 'base'.
     hod : str, optional
-        HOD flavor (e.g., 'B', 'dv'). Default is None (baseline HOD).
+        HOD flavor (e.g., 'base_B', 'base_dv'). Default is 'base' (baseline HOD).
     los : str, optional
         Line of sight direction (e.g., 'z'). Default is 'z'.
     imock : int, str, optional
@@ -723,7 +721,7 @@ def get_box_stats_fn(stats_dir='/global/cfs/cdirs/desi/science/gqc/y3_fits/mockc
         Measurement filename(s).
         Multiple filenames are returned as a list when imock is '*'.
     """
-    _default_options = dict(version='v2', tracer=None, cosmo=None, zrange=None, box_type='base', hod=None, los='z', imock=None)
+    _default_options = dict(version='v2', tracer=None, cosmo=None, zrange=None, hod='base', los='z', imock=None)
     catalog_options = kwargs.get('catalog', {})
     if not catalog_options:
         catalog_options = {key: kwargs.get(key, _default_options[key]) for key, value in _default_options.items()}
@@ -758,8 +756,7 @@ def get_box_stats_fn(stats_dir='/global/cfs/cdirs/desi/science/gqc/y3_fits/mockc
     cosmo = join_tracers(check_is_not_none('cosmo'))
     zrange = join_if_not_none(lambda zrange: f'z{zrange[0]:.1f}-{zrange[1]:.1f}', 'zrange')
     zrange = f'_{zrange}' if zrange else ''
-    box_type = join_tracers(check_is_not_none('box_type'))
-    hod = join_if_not_none(str, 'hod')
+    hod = join_tracers(check_is_not_none('hod'))
     hod = f'_{hod}' if hod else ''
     los = join_tracers(check_is_not_none('los'))
     extra = f'_{extra}' if extra else ''
@@ -774,7 +771,7 @@ def get_box_stats_fn(stats_dir='/global/cfs/cdirs/desi/science/gqc/y3_fits/mockc
         basis = kwargs.get('basis', None)
         basis = f'_{basis}' if basis else ''
         kind = f'mesh3_spectrum{basis}_poles'
-    basename = f'{kind}_{tracer}{zrange}_{cosmo}_{box_type}{hod}_los{los}{extra}{imock}.{ext}'
+    basename = f'{kind}_{tracer}{zrange}_{cosmo}{hod}_los{los}{extra}{imock}.{ext}'
     return stats_dir / basename
 
 
