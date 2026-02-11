@@ -473,7 +473,8 @@ def _merge_options(options1, options2):
 
 
 def get_catalog_fn(version=None, cat_dir=None, kind='data', tracer='LRG',
-                   region='NGC', weight='default_FKP', nran=10, imock=0, ext='h5', **kwargs):
+                   region='NGC', weight='default_FKP', nran=10, imock=0, ext='h5',
+                   flatten=False, **kwargs):
     """
     Return catalog filename(s) for given parameters.
 
@@ -512,7 +513,7 @@ def get_catalog_fn(version=None, cat_dir=None, kind='data', tracer='LRG',
         fn_lists =  [get_catalog_fn(version=version, cat_dir=cat_dir, kind=kind, tracer=tracer,
                                     region=region, weight=weight, nran=nran, imock=imock, ext=ext, **kwargs) for region in regions]
         # flatten list of lists (can append with nrand > 1 and region='ALL')
-        if any(isinstance(fn_list, list) for fn_list in fn_lists):
+        if flatten and any(isinstance(fn_list, list) for fn_list in fn_lists):
             return [fn for fn_list in fn_lists for fn in (fn_list if isinstance(fn_list, list) else [fn_list])]
         else:
             return fn_lists
@@ -1047,10 +1048,9 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
         Catalog object or list of Catalog objects (if ``concatenate`` is False).
         Contains 'RA', 'DEC', 'Z', 'NX', 'TARGETID', 'POSITION', 'INDWEIGHT' (individual weight), 'BITWEIGHT' columns.
     """
+    zrange, region, weight_type, imock, tracer = (kwargs.get(key) for key in ['zrange', 'region', 'weight', 'imock', 'tracer'])
     assert kind in ['data', 'randoms'], 'provide kind (data or randoms)'
     assert weight_type is not None, 'provide weight'
-
-    zrange, region, weight_type, imock, tracer = (kwargs.get(key) for key in ['zrange', 'region', 'weight', 'imock', 'tracer'])
     if kind == 'randoms' and (isinstance(reshuffle, dict) or (reshuffle is not None)):
         # if randoms are going to be reshuffled, all regions are needed so we force it.
         fns = get_catalog_fn(kind=kind,  **(kwargs | dict(region='ALL')))
@@ -1394,8 +1394,8 @@ def combine_stats(observables):
         observable = combine_attrs(observable, [observable for observable in observables])
 
     return observable
-
-
+    
+    
 def merge_catalogs(output, inputs, factor=1., seed=42, read_catalog=_read_catalog, **kwargs):
     import numpy as np
     from mockfactory import Catalog
