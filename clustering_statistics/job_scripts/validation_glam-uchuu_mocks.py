@@ -19,7 +19,7 @@ from clustering_statistics import tools
 setup_logging()
 
 
-def run_stats(tracer='LRG', version='glam-uchuu-v1-altmtl', weight='default_FKP', imocks=[451], meas_dir=Path(os.getenv('SCRATCH')) / 'measurements', stats=['mesh2_spectrum']):
+def run_stats(tracer='LRG', version='glam-uchuu-v1-altmtl', weight='default-FKP', imocks=[451], meas_dir=Path(os.getenv('SCRATCH')) / 'measurements', stats=['mesh2_spectrum']):
     # Everything inside this function will be executed on the compute nodes;
     # This function must be self-contained; and cannot rely on imports from the outer scope.
     import os
@@ -27,6 +27,8 @@ def run_stats(tracer='LRG', version='glam-uchuu-v1-altmtl', weight='default_FKP'
     import functools
     from pathlib import Path
     import jax
+    from jax import config
+    config.update('jax_enable_x64', False)
     os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.9'
     try: jax.distributed.initialize()
     except RuntimeError: print('Distributed environment already initialized')

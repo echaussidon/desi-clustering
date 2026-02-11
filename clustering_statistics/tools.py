@@ -8,6 +8,8 @@ import functools
 
 import numpy as np
 from mpi4py import MPI
+import jax
+from jax import numpy as jnp
 from mockfactory import Catalog, sky_to_cartesian, setup_logging
 import lsstypes as types
 
@@ -121,7 +123,7 @@ def select_region(ra, dec, region=None):
         - 'SSGCnoDES': Southern part of SGC excluding DES footprint
         - 'SGCnoDES': SGC excluding DES footprint
         - 'ACT_DR6': ACT DR6 footprint
-        = 'PLANCK_PR4': Planck PR4 footprint
+        - 'PLANCK_PR4': Planck PR4 footprint
 
     Returns
     -------
@@ -201,11 +203,93 @@ def compute_fiducial_selection_weights(catalog, stat='mesh3_spectrum', tracer=No
     return catalog
 
 
+@jax.jit
+def lininterp_1d(xp: jax.Array, y: jax.Array, xmin: jax.Array=0., step: jax.Array=1.):
+    """
+    xp are query points, y is a 1D array of samples spaced by `step` starting at `xmin`.
+
+    Parameters
+    ----------
+    xp : array-like
+        Query points.
+    y : array-like
+        Sampled values on a regular grid.
+    xmin : float, optional
+        Grid starting coordinate.
+    step : float, optional
+        Grid spacing.
+
+    Returns
+    -------
+    array-like
+        Interpolated values at xp using linear interpolation with clipping at boundaries.
+    """
+    fidx = (xp - xmin) / step
+    idx = jnp.floor(fidx).astype(jnp.int16)
+    fidx -= idx
+    toret = (1 - fidx) * y[idx] + fidx * y[idx + 1]
+    #return jnp.where((idx >= 0) & (idx < len(y)), toret, 0.)
+    toret = jnp.where(idx < 0, y[0], toret)
+    toret = jnp.where(idx > len(y) - 1, y[-1], toret)
+    return toret
+
+
+def get_interpolator_1d(x: jax.Array, y: jax.Array, order: int=1):
+    """
+    Return a 1D interpolator function for arrays x, y.
+
+    For linear regular grids (constant spacing) a JIT-able linear interpolator is
+    returned; for other cases or higher `order`, an interpolator based on interpax is used.
+
+    Parameters
+    ----------
+    x : 1D array-like
+        Grid points (monotonic).
+    y : 1D array-like
+        Values at grid points.
+    order : int, optional
+        Interpolation order (1 for linear). Higher orders use an external Interpolator.
+
+    Returns
+    -------
+    callable
+        A function that takes query points and returns interpolated values (JAX arrays).
+    """
+    xmin, xmax = x[0], x[-1]
+    step = (xmax - xmin) / (len(x) - 1)
+    is_lin = np.allclose(x, step * np.arange(len(x)) + xmin)
+
+    if order == 1:
+        if is_lin:
+
+            def interp(xp):
+                return lininterp_1d(xp, y=y, xmin=xmin, step=step)
+        else:
+
+            def interp(xp):
+                return jnp.interp(xp, x, y)
+
+    else:
+        from interpax import Interpolator1D
+        interpolator = Interpolator1D(x, jnp.asarray(y), method={1: 'linear', 3: 'cubic2'}[order], extrap=False, period=None)
+
+        @jax.jit
+        def interp(xp):
+            # clip
+            toret = interpolator(xp)
+            #return jnp.where((xp >= xmin) & (xp <= xmax), toret, 0.)
+            toret = jnp.where(xp < xmin, y[0], toret)
+            toret = jnp.where(xp > xmax, y[-1], toret)
+            return toret
+
+    return interp
+
+
 def compute_fiducial_png_weights(ell, catalog, tracer='LRG', p=1.):
     """Return total optimal weights for local PNG analysis."""
     from jax import numpy as jnp
     from cosmoprimo.fiducial import DESI
-    from cosmoprimo.utils import Interpolator1D
+    from interpax import Interpolator1D
 
     def bias(z, tracer='QSO'):
         """Bias model for the different DESI tracer (measured from DR2 data (loa/v2))."""
@@ -224,10 +308,10 @@ def compute_fiducial_png_weights(ell, catalog, tracer='LRG', p=1.):
         return alpha * (1 + z)**2 + beta
 
     cosmo = DESI()
-    zmax, nz = 100., 512
-    zgrid = 1. / np.geomspace(1. / (1. + zmax), 1., nz)[::-1] - 1.
-    growth_factor = Interpolator1D(zgrid, jnp.array(cosmo.growth_factor(zgrid)), k=3)
-    growth_rate = Interpolator1D(zgrid, jnp.array(cosmo.growth_rate(zgrid)), k=3)
+    zstep = 0.001
+    zgrid = np.arange(0., 10. + zstep, zstep)
+    growth_factor = get_interpolator_1d(zgrid, cosmo.growth_factor(zgrid), order=1)
+    growth_rate = get_interpolator_1d(zgrid, cosmo.growth_rate(zgrid), order=1)
 
     tracers = _make_tuple(tracer, n=2)
     catalogs = _make_tuple(catalog, n=2)
@@ -425,8 +509,13 @@ def get_catalog_fn(version=None, cat_dir=None, kind='data', tracer='LRG',
     elif 'full' not in kind:
         if region in ['S', 'ALL']: regions = ['NGC', 'SGC']
         else: raise NotImplementedError(f'{region} is unknown')
-        return [get_catalog_fn(version=version, cat_dir=cat_dir, kind=kind, tracer=tracer,
-                               region=region, weight=weight, nran=nran, imock=imock, ext=ext, **kwargs) for region in regions]
+        fn_lists =  [get_catalog_fn(version=version, cat_dir=cat_dir, kind=kind, tracer=tracer,
+                                    region=region, weight=weight, nran=nran, imock=imock, ext=ext, **kwargs) for region in regions]
+        # flatten list of lists (can append with nrand > 1 and region='ALL')
+        if any(isinstance(fn_list, list) for fn_list in fn_lists):
+            return [fn for fn_list in fn_lists for fn in (fn_list if isinstance(fn_list, list) else [fn_list])]
+        else:
+            return fn_lists
 
     if cat_dir is None:  # pre-registered paths
         if version == 'data-dr1-v1.5':
@@ -778,8 +867,9 @@ def _read_catalog(fn, mpicomm=None, **kwargs):
     import warnings
     one_fn = fn[0] if isinstance(fn, (tuple, list)) else fn
     if str(one_fn).endswith('.h5'): 
+        kwargs.setdefault('locking', False)  # fix -> Unable to synchronously open file (unable to lock file, errno = 524, error message = 'Unknown error 524')
         try:
-            catalog = Catalog.read(fn, mpicomm=mpicomm, group='LSS', **kwargs)
+            catalog = Catalog.read(fn, group='LSS', mpicomm=mpicomm, **kwargs)
         except KeyError:
             catalog = Catalog.read(fn, mpicomm=mpicomm)
     else:
@@ -922,7 +1012,7 @@ def expand_randoms(randoms, parent_randoms, data, from_randoms=('RA', 'DEC'), fr
 
 @default_mpicomm
 def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_catalog_fn, get_positions_from_rdz=get_positions_from_rdz,
-                            expand=None, reshuffle=None, FKP_P0=None, binned_weight=None, mpicomm=None, **kwargs):
+                            expand=None, reshuffle=None, FKP_P0=None, binned_weight=None, return_all_columns=False, mpicomm=None, **kwargs):
     """
     Read clustering catalog (data or randoms) with given parameters.
 
@@ -957,7 +1047,8 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
         Catalog object or list of Catalog objects (if ``concatenate`` is False).
         Contains 'RA', 'DEC', 'Z', 'NX', 'TARGETID', 'POSITION', 'INDWEIGHT' (individual weight), 'BITWEIGHT' columns.
     """
-    assert kind in ['data', 'randoms'], 'provide kind'
+    assert kind in ['data', 'randoms'], 'provide kind (data or randoms)'
+    assert weight_type is not None, 'provide weight'
 
     zrange, region, weight_type, imock, tracer = (kwargs.get(key) for key in ['zrange', 'region', 'weight', 'imock', 'tracer'])
     if kind == 'randoms' and (isinstance(reshuffle, dict) or (reshuffle is not None)):
@@ -972,8 +1063,8 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
         raise IOError(f'Catalogs {[fn for fn, ex in exists.items() if not ex]} do not exist!')
 
     if kind == 'randoms' and isinstance(expand, dict):
-        from_data = expand.get('from_data', ['Z','WEIGHT_SYS'])
-        from_randoms = expand.get('from_randoms', ['RA', 'DEC','NTILE'])
+        from_data = expand.get('from_data', ['Z','WEIGHT_SYS','FRAC_TLOBS_TILES'])
+        from_randoms = expand.get('from_randoms', ['RA','DEC','NTILE'])
         parent_randoms_fn = expand['parent_randoms_fn']
         if not isinstance(parent_randoms_fn, (tuple, list)):
             parent_randoms_fn = [parent_randoms_fn]
@@ -1019,7 +1110,7 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
         catalogs[ifn] = (irank, None)
         if mpicomm.rank == irank:  # Faster to read catalogs from one rank
             catalog = _read_catalog(fn, mpicomm=MPI.COMM_SELF)
-            if expand is not None:
+            if expand is not None: 
                 catalog = expand(catalog, ifn)
             if reshuffle is not None:
                 if mpicomm.rank == 0: 
@@ -1032,15 +1123,14 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
             columns = ['RA', 'DEC', 'Z', 'WEIGHT', 'WEIGHT_COMP', 'WEIGHT_FKP', 'WEIGHT_SYS', 'BITWEIGHTS', 'FRAC_TLOBS_TILES', 'NTILE', 'NX', 'TARGETID']
             columns = [column for column in columns if column in catalog.columns()]
             catalog = catalog[columns]
-            if zrange is not None:
-                mask = (catalog['Z'] >= zrange[0]) & (catalog['Z'] < zrange[1])
-                catalog = catalog[mask]
-            if 'bitwise' in weight_type:
-                mask = (catalog['FRAC_TLOBS_TILES'] != 0)
-                catalog = catalog[mask]
-            if region is not None:
-                mask = select_region(catalog['RA'], catalog['DEC'], region)
-                catalog = catalog[mask]
+
+            if zrange is not None: 
+                catalog = catalog[(catalog['Z'] >= zrange[0]) & (catalog['Z'] < zrange[1])]
+            if 'bitwise' in weight_type: 
+                catalog = catalog[(catalog['FRAC_TLOBS_TILES'] != 0)]
+            if region is not None: 
+                catalog = catalog[select_region(catalog['RA'], catalog['DEC'], region)]
+
             catalogs[ifn] = (irank, catalog)
 
     rdzw = []
@@ -1049,24 +1139,31 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
             catalog = Catalog.scatter(catalog, mpicomm=mpicomm, mpiroot=irank)
         individual_weight = catalog['WEIGHT']
         bitwise_weights = None
+
         if 'bitwise' in weight_type:
             if kind == 'data':
                 individual_weight = catalog['WEIGHT'] / catalog['WEIGHT_COMP']
                 bitwise_weights = catalog['BITWEIGHTS']
             elif kind == 'randoms':
                 individual_weight = catalog['WEIGHT'] * get_binned_weight(catalog, binned_weight['missing_power'])
+
         if 'FKP' in weight_type.upper():
             if mpicomm.rank == 0: logger.info('Multiplying individual weights by WEIGHT_FKP')
             if FKP_P0 is not None:
                 catalog['WEIGHT_FKP'] = 1. / (1. + catalog['NX'] * FKP_P0)
             individual_weight *= catalog['WEIGHT_FKP']
+
         if 'noimsys' in weight_type:
             # this assumes that the WEIGHT column contains WEIGHT_SYS
             if mpicomm.rank == 0: logger.info('Dividing individual weights by WEIGHT_SYS')
             individual_weight /= catalog['WEIGHT_SYS']
+
         if 'comp' in weight_type:
             individual_weight *= get_binned_weight(catalog, binned_weight['completeness'])
-        catalog = catalog[[column for column in ['RA', 'DEC', 'Z', 'NX', 'TARGETID'] if column in catalog]]
+
+        if not return_all_columns: 
+            catalog = catalog[[column for column in ['RA', 'DEC', 'Z', 'NX', 'TARGETID'] if column in catalog]]
+        
         catalog['INDWEIGHT'] = individual_weight
         for column in catalog:
             if not np.issubdtype(catalog[column].dtype, np.integer):
@@ -1208,7 +1305,7 @@ def possible_combine_regions(regions):
 
 
 def compute_fkp_effective_redshift(*fkps, cellsize=10., order=2, split=None, fields=None, func_of_z=lambda x: x,
-                                   resampler='cic'):
+                                   resampler='cic', return_fraction=False):
     """
     Return effective redshift given input :class:`FKPField` of :class:`ParticleField` fields.
 
@@ -1236,15 +1333,14 @@ def compute_fkp_effective_redshift(*fkps, cellsize=10., order=2, split=None, fie
     # FIXME
     from jax import numpy as jnp
     from cosmoprimo.fiducial import TabulatedDESI, DESI
-    from cosmoprimo.utils import Interpolator1D
     from jaxpower import split_particles, FKPField
     from jaxpower.mesh import _iter_meshes
 
-    fiducial = TabulatedDESI()
-    zmax, nz = 100., 512
-    zgrid = 1. / np.geomspace(1. / (1. + zmax), 1., nz)[::-1] - 1.
+    fiducial = DESI()
+    zstep = 0.005
+    zgrid = np.arange(0., 1100 + zstep, zstep)
     rgrid = fiducial.comoving_radial_distance(zgrid)
-    d2z = Interpolator1D(jnp.array(rgrid), jnp.array(func_of_z(zgrid)), k=1)  #FIXME k = 1, otherwise memory error
+    d2z = get_interpolator_1d(rgrid, func_of_z(zgrid), order=1)
 
     fkps_none =  list(fkps) + [None] * (order - len(fkps))
 
@@ -1259,24 +1355,44 @@ def compute_fkp_effective_redshift(*fkps, cellsize=10., order=2, split=None, fie
         reduce = 1
         for mesh in _iter_meshes(*particles, resampler=resampler, cellsize=cellsize, compensate=False, interlacing=0):
             reduce *= mesh
-        reduce /= reduce.sum()
+        rsum = reduce.sum()
+        if not return_fraction: reduce /= rsum
         distance = jnp.sqrt(sum(xx**2 for xx in mesh.attrs.xcoords(kind='position', sparse=True)))
         reduce *= d2z(distance)
-        return reduce.sum()
+        if not return_fraction: return reduce.sum()
+        return reduce.sum(), rsum
 
     return compute_fkp_normalization_z(*randoms)
 
 
 def combine_stats(observables):
     """Combine input observables (e.g. NGC and SGC); of :mod:`lsstypes` type."""
+    import copy
     observables = list(observables)
     observable = types.sum(observables)
+
+    def _combine_attrs(observables):
+        attrs = copy.deepcopy(observables[0].attrs)
+        for name in ['size_data', 'size_randoms', 'size_shifted',
+                    'wsum_data', 'wsum_randoms', 'wsum_shifted']:
+            if name in attrs:
+                attrs[name] = sum([observable.attrs[name] for observable in observables], start=[])
+        name = 'zeff'
+        if name in attrs:
+            norm_zeff = [observable.attrs[f'norm_{name}'] for observable in observables]
+            attrs[name] = np.average([observable.attrs[name] for observable in observables], weights=norm_zeff)
+            attrs[f'norm_{name}'] = np.sum(norm_zeff)
+        return attrs
+
+    def combine_attrs(observable, observables):
+        return types.tree_map(lambda observables: observables[0].clone(attrs=_combine_attrs(observables[1:])), [observable] + observables, level=None)
+    
     if isinstance(observable, types.WindowMatrix):
         window = observable
-        for label, pole in window.observable.items():
-            zeff = np.average([window.observable.get(**label).attrs['zeff'] for window in observables],
-                               weights=[window.observable.get(**label).values('norm').mean() for window in observables])
-            pole.attrs.update(zeff=zeff)
+        observable = window = window.clone(observable=combine_attrs(window.observable, [window.observable for window in observables]))
+    else:
+        observable = combine_attrs(observable, [observable for observable in observables])
+
     return observable
 
 

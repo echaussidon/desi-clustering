@@ -43,6 +43,8 @@ def run_stats(tracer='LRG', version='holi-v1-altmtl', imocks=[451], stats_dir=Pa
     import functools
     from pathlib import Path
     import jax
+    from jax import config
+    config.update('jax_enable_x64', True)
     os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.9'
     try: jax.distributed.initialize()
     except RuntimeError: print('Distributed environment already initialized')
@@ -80,7 +82,7 @@ if __name__ == '__main__':
             rerun = []
             for zrange in tools.propose_fiducial('zranges', tracer):
                 for kind in ['mesh2_spectrum', 'mesh3_spectrum']:
-                    rexists, missing, unreadable = tools.checks_if_exists_and_readable(get_fn=functools.partial(tools.get_stats_fn, kind=kind, stats_dir=stats_dir, tracer=tracer, region='GCcomb', weight='default_FKP', zrange=zrange, version=version), test_if_readable=True, imock=list(range(1001)))
+                    rexists, missing, unreadable = tools.checks_if_exists_and_readable(get_fn=functools.partial(tools.get_stats_fn, kind=kind, stats_dir=stats_dir, tracer=tracer, region='GCcomb', weight='default-FKP', zrange=zrange, version=version), test_if_readable=True, imock=list(range(1001)))
                     rerun += [imock for imock in imocks if (imock in unreadable[1]['imock']) or (imock not in rexists[1]['imock'])]
             imocks = sorted(set(rerun))
         batch_imocks = np.array_split(imocks, max(len(imocks) // 10, 1)) if len(imocks) else []

@@ -16,14 +16,14 @@ from clustering_statistics import tools, setup_logging, compute_stats_from_optio
 
 
 def test_stats_fn(stats=['mesh2_spectrum']):
-    catalog_options = dict(version='holi-v1-altmtl', tracer='LRG', zrange=(0.4, 0.5), region='NGC', weight='default_FKP', imock=451)
+    catalog_options = dict(version='holi-v1-altmtl', tracer='LRG', zrange=(0.4, 0.5), region='NGC', weight='default-FKP', imock=451)
     for stat in stats:
         for kw in [{'auw': True}, {'cut': True}]:
             fn1 = tools.get_stats_fn(kind=stat, **catalog_options, **kw)
             fn2 = tools.get_stats_fn(kind=stat, catalog=catalog_options, **kw)
             assert fn2 == fn1, f'{fn2} != {fn1}'
 
-    catalog_options = dict(version='holi-v1-altmtl', tracer=('LRG', 'ELG'), zrange=((0.4, 0.5), (0.4, 0.5)), region='NGC', weight='default_FKP', imock=451)
+    catalog_options = dict(version='holi-v1-altmtl', tracer=('LRG', 'ELG'), zrange=((0.4, 0.5), (0.4, 0.5)), region='NGC', weight='default-FKP', imock=451)
     for stat in stats:
         for kw in [{'auw': True}, {'cut': True}]:
             fn1 = tools.get_stats_fn(kind=stat, **catalog_options, **kw)
@@ -42,7 +42,7 @@ def test_auw(stats=['mesh2_spectrum']):
         zranges = tools.propose_fiducial('zranges', tracer)
         for region in ['NGC', 'SGC']:
             catalog_options = dict(version='holi-v1-altmtl', tracer=tracer, zrange=zranges, region=region, imock=451)
-            #catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default_FKP', nran=1)
+            #catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default-FKP', nran=1)
             compute_stats_from_options(stats, catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), mesh2_spectrum={'cut': True, 'auw': True}, particle2_correlation={'auw': True})
 
 
@@ -52,7 +52,7 @@ def test_bitwise(stats=['mesh2_spectrum']):
         zranges = tools.propose_fiducial('zranges', tracer)
         for region in ['NGC', 'SGC']:
             #catalog_options = dict(version='holi-v1-altmtl', tracer=tracer, zrange=zranges, region=region, imock=451)
-            catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default_FKP_bitwise', nran=1)
+            catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default-bitwise-FKP', nran=1)
             compute_stats_from_options(stats, catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), mesh2_spectrum={'cut': True, 'auw': True}, particle2_correlation={'auw': True})
 
 
@@ -62,7 +62,7 @@ def test_spectrum3(stats=['mesh3_spectrum']):
         zranges = tools.propose_fiducial('zranges', tracer)
         for region in ['NGC', 'SGC']:
             #catalog_options = dict(version='holi-v1-altmtl', tracer=tracer, zrange=zranges, region=region, imock=451)
-            catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default_FKP', nran=1)
+            catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default-FKP', nran=1)
             compute_stats_from_options(stats, catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), mesh3_spectrum={'basis': 'scoccimarro', 'ells': [0, 2]})
 
 
@@ -99,7 +99,7 @@ def test_optimal_weights(stats=['mesh2_spectrum']):
         zranges = tools.propose_fiducial('zranges', tracer)[:1]
         for region in ['NGC', 'SGC']:
             #catalog_options = dict(version='holi-v1-altmtl', tracer=tracer, zrange=zranges, region=region, imock=451)
-            catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default_FKP', nran=1)
+            catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default-FKP', nran=1)
             compute_stats_from_options(stats, catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), mesh2_spectrum={'auw': True, 'cut': True}, particle2_correlation={}, analysis='png_local')
 
 
@@ -108,27 +108,27 @@ def test_cross(stats=['mesh2_spectrum']):
     for tracer in [('LRG', 'ELG_LOPnotqso')]:
         zranges = [(0.8, 1.1)]
         for region in ['NGC', 'SGC']:
-            catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default_FKP', nran=1)
+            catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default-FKP', nran=1)
             compute_stats_from_options(stats, catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), mesh2_spectrum={'auw': True, 'cut': True}, particle2_correlation={}, analysis='png_local')
 
 
 def test_window(stats=['mesh2_spectrum']):
     stats_dir = Path(Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks')
-    stats = ['mesh3_spectrum']
     for stat in stats:
-        for tracer in ['LRG']:
+        for tracer in ['QSO']:
+            zranges = [(0.8, 2.1)]
+            for region in ['NGC', 'SGC'][:1]:
+                catalog_options = dict(version='holi-v1-altmtl', tracer=tracer, zrange=zranges, region=region, imock=451, nran=1)
+                #catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default-FKP', nran=1)
+                compute_stats_from_options([stat, f'window_{stat}'][1:], catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), mesh2_spectrum={}, window_mesh2_spectrum={'cut': True})
+        if 'mesh3' in stat: continue
+
+        for tracer in [('LRG', 'ELG_LOPnotqso')]:
             zranges = [(0.8, 1.1)]
             for region in ['NGC', 'SGC'][:1]:
                 catalog_options = dict(version='holi-v1-altmtl', tracer=tracer, zrange=zranges, region=region, imock=451, nran=1)
-                #catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default_FKP', nran=1)
-                compute_stats_from_options([stat, f'window_{stat}'][1:], catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), mesh2_spectrum={}, particle2_correlation={'auw': True})
-        if 'mesh3' in stat: continue
-        for tracer in [('LRG', 'ELG_LOPnotqso')]:
-            zranges = [(0.8, 1.1)]
-            for region in ['NGC', 'SGC']:
-                catalog_options = dict(version='holi-v1-altmtl', tracer=tracer, zrange=zranges, region=region, imock=451, nran=1)
-                #catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default_FKP', nran=1)
-                compute_stats_from_options([stat, f'window_{stat}'], catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), mesh2_spectrum={}, particle2_correlation={'auw': True}, analysis='png_local')
+                #catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default-FKP', nran=1)
+                compute_stats_from_options([stat, f'window_{stat}'], catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), mesh2_spectrum={}, window_mesh2_spectrum={'cut': True}, analysis='png_local')
 
 
 def test_norm():
@@ -137,7 +137,7 @@ def test_norm():
     for tracer in ['BGS_BRIGHT-21.5']:
         zrange = tools.propose_fiducial('zranges', tracer)[0]
         for region in ['NGC']:
-            catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zrange, region=region, weight='default_FKP', nran=2)
+            catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zrange, region=region, weight='default-FKP', nran=2)
             compute_stats_from_options(stat, catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir))
             fn = tools.get_stats_fn(kind=stat, stats_dir=stats_dir, **catalog_options)
             if jax.process_index() == 0:
@@ -149,8 +149,13 @@ def test_norm():
 if __name__ == '__main__':
 
     os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.9'
-    #jax.distributed.initialize()
+    from jax import config
+    config.update('jax_enable_x64', False)
+    jax.distributed.initialize()
     setup_logging()
+
+    test_window(stats=['mesh3_spectrum'])
+    exit()
     test_stats_fn()
     test_auw(stats=['mesh2_spectrum'])
     test_bitwise(stats=['mesh2_spectrum'])

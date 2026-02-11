@@ -105,9 +105,8 @@ def compute_stats_from_options(stats, analysis='full_shape', cache=None,
             _catalog_options |= {key: recon_options.pop(key) for key in list(recon_options) if key in ['nran', 'zrange']}
 
         data[tracer] = read_clustering_catalog(kind='data', **_catalog_options, concatenate=True)
-        
         randoms[tracer] = read_clustering_catalog(kind='randoms', **_catalog_options, cache=cache, concatenate=False)
-
+    
     from jaxpower import create_sharding_mesh
     with create_sharding_mesh() as sharding_mesh:
         if with_recon:
@@ -122,7 +121,6 @@ def compute_stats_from_options(stats, analysis='full_shape', cache=None,
                     random['POSITION_REC'] = randoms_rec_positions[start:start + size]
                     start += size
                 randoms[tracer] = randoms[tracer][:catalog_options[tracer]['nran']]  # keep only relevant random files
-                
 
         # Compute angular upweights
         if any(kwargs[stat].get('auw', False) for stat in stats):
@@ -385,4 +383,6 @@ def main(**kwargs):
 
 if __name__ == '__main__':
 
+    from jax import config
+    config.update('jax_enable_x64', False)
     main()
