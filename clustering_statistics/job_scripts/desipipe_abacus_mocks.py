@@ -43,7 +43,7 @@ def run_stats(tracer='LRG', version='abacus-2ndgen-complete', imocks=[0], stats_
     from pathlib import Path
     import jax
     from jax import config
-    config.update('jax_enable_x64', False)
+    config.update('jax_enable_x64', True)
     os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.9'
     try: jax.distributed.initialize()
     except RuntimeError: print('Distributed environment already initialized')
@@ -57,7 +57,7 @@ def run_stats(tracer='LRG', version='abacus-2ndgen-complete', imocks=[0], stats_
     for imock in imocks:
         regions = ['NGC', 'SGC']
         for region in regions:
-            options = dict(catalog=dict(version=version, tracer=tracer, zrange=zranges, region=region, imock=imock, nran=1), mesh2_spectrum={}, window_mesh3_spectrum={'buffer_size': 15} | {'ibatch': ibatch} if isinstance(ibatch, tuple) else {'computed_batches': ibatch})
+            options = dict(catalog=dict(version=version, tracer=tracer, zrange=zranges, region=region, imock=imock), mesh2_spectrum={}, window_mesh3_spectrum={'buffer_size': 15} | {'ibatch': ibatch} if isinstance(ibatch, tuple) else {'computed_batches': ibatch})
             options = fill_fiducial_options(options)
             compute_stats_from_options(stats, get_stats_fn=get_stats_fn, cache=cache, **options)
         jax.experimental.multihost_utils.sync_global_devices('measurements')
@@ -69,7 +69,7 @@ def run_stats(tracer='LRG', version='abacus-2ndgen-complete', imocks=[0], stats_
 if __name__ == '__main__':
 
     mode = 'interactive'
-    #stats = ['mesh2_spectrum', 'mesh3_spectrum']
+    #stats = ['mesh2_spectrum'] # 'mesh3_spectrum']
     stats = ['window_mesh2_spectrum']
     #stats = ['window_mesh3_spectrum']
     imocks = np.arange(25)
@@ -77,7 +77,7 @@ if __name__ == '__main__':
     stats_dir = Path('/global/cfs/cdirs/desi/mocks/cai/LSS/DA2/mocks/desipipe')
     version = 'abacus-2ndgen-complete'
     
-    for tracer in ['LRG', 'ELG', 'QSO'][:1]:
+    for tracer in ['LRG', 'ELG_LOP', 'QSO']:
         if False:
             exists, missing = tools.checks_if_exists_and_readable(get_fn=functools.partial(tools.get_catalog_fn, tracer=tracer, region='NGC', version=version), test_if_readable=False, imock=list(range(1001)))[:2]
             imocks = exists[1]['imock']

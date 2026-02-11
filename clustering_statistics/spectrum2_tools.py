@@ -358,7 +358,6 @@ def compute_window_mesh2_spectrum(*get_data_randoms, spectrum, optimal_weights=N
         step = min(np.nanmin(np.diff(edges, axis=-1)), step)
     edgesin = np.arange(0., 1.2 * stop, step)
     edgesin = jnp.column_stack([edgesin[:-1], edgesin[1:]])
-    print(edgesin.max())
 
     def _compute_window_ell(all_randoms, ells, isum=0, fields=None):
         all_randoms = list(all_randoms)
@@ -404,6 +403,8 @@ def compute_window_mesh2_spectrum(*get_data_randoms, spectrum, optimal_weights=N
                 all_particles.append(convert_particles(randoms.clone(weights=alpha * randoms.weights)))
             correlation = compute_particle2(*all_particles, bin=pbin, los=los)
             correlation = correlation.clone(num_shotnoise=compute_particle2_shotnoise(*all_particles, bin=pbin, fields=fields), norm=[np.mean(norm)] * len(sbin.ells))
+            pole = next(iter(correlation))
+            print(pole.coords('s'))
             correlation = interpolate_window_function(correlation, coords=coords, order=3)
             results['window_mesh2_correlation_cut'] = correlation
             correlation = correlation.clone(value=results['window_mesh2_correlation_raw'].value() + correlation.value())
