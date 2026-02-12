@@ -473,8 +473,7 @@ def _merge_options(options1, options2):
 
 
 def get_catalog_fn(version=None, cat_dir=None, kind='data', tracer='LRG',
-                   region='NGC', weight='default_FKP', nran=10, imock=0, ext='h5',
-                   flatten=False, **kwargs):
+                   region='NGC', weight='default_FKP', nran=10, imock=0, ext='h5', **kwargs):
     """
     Return catalog filename(s) for given parameters.
 
@@ -513,7 +512,7 @@ def get_catalog_fn(version=None, cat_dir=None, kind='data', tracer='LRG',
         fn_lists =  [get_catalog_fn(version=version, cat_dir=cat_dir, kind=kind, tracer=tracer,
                                     region=region, weight=weight, nran=nran, imock=imock, ext=ext, **kwargs) for region in regions]
         # flatten list of lists (can append with nrand > 1 and region='ALL')
-        if flatten and any(isinstance(fn_list, list) for fn_list in fn_lists):
+        if any(isinstance(fn_list, list) for fn_list in fn_lists):
             return [fn for fn_list in fn_lists for fn in (fn_list if isinstance(fn_list, list) else [fn_list])]
         else:
             return fn_lists
@@ -1051,13 +1050,17 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
     zrange, region, weight_type, imock, tracer = (kwargs.get(key) for key in ['zrange', 'region', 'weight', 'imock', 'tracer'])
     assert kind in ['data', 'randoms'], 'provide kind (data or randoms)'
     assert weight_type is not None, 'provide weight'
-    if kind == 'randoms' and (isinstance(reshuffle, dict) or (reshuffle is not None)):
+    reshuffle_condition = kind == 'randoms' and (isinstance(reshuffle, dict) or (reshuffle is not None)) 
+    if reshuffle_condition:
         # if randoms are going to be reshuffled, all regions are needed so we force it.
         fns = get_catalog_fn(kind=kind,  **(kwargs | dict(region='ALL')))
     else:
         fns = get_catalog_fn(kind=kind, **kwargs)
     if not isinstance(fns, (tuple, list)): fns = [fns]
-    fns = list(zip(*fns)) if isinstance(fns[0], (list, tuple)) else fns
+    if region in ['S', 'ALL'] or reshuffle_condition:
+        # group in pairs (this assumes that fns is a list with the first half corresponds to filenames
+        # of one region and the second halft to another (e.g., NGC and SGC) 
+        fns = list(zip(fns[:len(fns)//2],fns[len(fns)//2:])) if len(fns)>1 else fns  
     exists = {f: os.path.exists(f) for fn in fns for f in (fn if isinstance(fn, (list,tuple)) else [fn])}
     if not all(exists.values()):
         raise IOError(f'Catalogs {[fn for fn, ex in exists.items() if not ex]} do not exist!')
@@ -1104,7 +1107,7 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
         reshuffle = None
 
     catalogs = [None] * len(fns)
-    if mpicomm.rank == 0: logger.info(f'length of filenames {len(fns)} and fns are {fns}')
+    # if mpicomm.rank == 0: logger.info(f'length of filenames {len(fns)} and fns are {fns}')
     for ifn, fn in enumerate(fns):
         irank = ifn % mpicomm.size
         catalogs[ifn] = (irank, None)
@@ -1120,7 +1123,7 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
                 catalog = reshuffle(catalog, 100 * imock + ifn)
                 if mpicomm.rank == 0: 
                     logger.info(f'Reshuffling randoms completed in {time() - t0:2.1f} s')
-            columns = ['RA', 'DEC', 'Z', 'WEIGHT', 'WEIGHT_COMP', 'WEIGHT_FKP', 'WEIGHT_SYS', 'BITWEIGHTS', 'FRAC_TLOBS_TILES', 'NTILE', 'NX', 'TARGETID']
+            columns = ['RA', 'DEC', 'Z', 'WEIGHT', 'WEIGHT_COMP', 'WEIGHT_FKP', 'WEIGHT_SYS', 'WEIGHT_ZFAIL', 'BITWEIGHTS', 'FRAC_TLOBS_TILES', 'NTILE', 'NX', 'TARGETID']
             columns = [column for column in columns if column in catalog.columns()]
             catalog = catalog[columns]
 
@@ -1137,7 +1140,7 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
     for irank, catalog in catalogs:
         if mpicomm.size > 1:
             catalog = Catalog.scatter(catalog, mpicomm=mpicomm, mpiroot=irank)
-        individual_weight = catalog['WEIGHT']
+        individual_weight = catalog['WEIGHT'].copy()
         bitwise_weights = None
 
         if 'bitwise' in weight_type:
@@ -1377,6 +1380,7 @@ def combine_stats(observables):
                     'wsum_data', 'wsum_randoms', 'wsum_shifted']:
             if name in attrs:
                 attrs[name] = sum([observable.attrs[name] for observable in observables], start=[])
+
         name = 'zeff'
         if name in attrs:
             norm_zeff = [observable.attrs[f'norm_{name}'] for observable in observables]
