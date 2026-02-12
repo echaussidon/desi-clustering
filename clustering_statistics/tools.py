@@ -1374,9 +1374,9 @@ def combine_stats(observables):
     def _combine_attrs(observables):
         attrs = copy.deepcopy(observables[0].attrs)
         for name in ['size_data', 'size_randoms', 'size_shifted',
-                    'wsum_data', 'wsum_randoms', 'wsum_shifted']:
+                     'wsum_data', 'wsum_randoms', 'wsum_shifted']:
             if name in attrs:
-                attrs[name] = sum([observable.attrs[name] for observable in observables], start=[])
+                attrs[name] = sum([list(observable.attrs[name]) for observable in observables], start=[])
         name = 'zeff'
         if name in attrs:
             norm_zeff = [observable.attrs[f'norm_{name}'] for observable in observables]
