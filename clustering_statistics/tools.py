@@ -1047,8 +1047,8 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
         Catalog object or list of Catalog objects (if ``concatenate`` is False).
         Contains 'RA', 'DEC', 'Z', 'NX', 'TARGETID', 'POSITION', 'INDWEIGHT' (individual weight), 'BITWEIGHT' columns.
     """
-    zrange, region, weight_type, imock, tracer = (kwargs.get(key) for key in ['zrange', 'region', 'weight', 'imock', 'tracer'])
     assert kind in ['data', 'randoms'], 'provide kind (data or randoms)'
+    zrange, region, weight_type, imock, tracer = (kwargs.get(key) for key in ['zrange', 'region', 'weight', 'imock', 'tracer'])
     assert weight_type is not None, 'provide weight'
     reshuffle_condition = kind == 'randoms' and (isinstance(reshuffle, dict) or (reshuffle is not None)) 
     if reshuffle_condition:

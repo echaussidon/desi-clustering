@@ -28,7 +28,7 @@ def run_stats(tracer='LRG', zranges=None, version='glam-uchuu-v1-altmtl', weight
     from pathlib import Path
     import jax
     from jax import config
-    config.update('jax_enable_x64', False)
+    config.update('jax_enable_x64', True)
     os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.9'
     try: jax.distributed.initialize()
     except RuntimeError: print('Distributed environment already initialized')
@@ -66,9 +66,9 @@ if __name__ == '__main__':
 
     stats_dir = Path(os.getenv('CFS')) / 'cai' / 'holi_lightcone_validation'
 
-    todo = ['ref']
+    todo = ['test']
     weight = 'default'
-    stats = ['mesh2_spectrum', 'mesh3_spectrum_sugiyama', 'mesh3_spectrum_scoccimarro'][-1:]
+    stats = ['mesh2_spectrum', 'mesh3_spectrum_sugiyama', 'mesh3_spectrum_scoccimarro'][1:2]
 
     if 'ref' in todo:
         imocks = list(range(5))
@@ -86,12 +86,21 @@ if __name__ == '__main__':
         run_stats(('ELG_LOPnotqso', 'QSO'), **kw, stats_dir=stats_dir)
 
     if 'test' in todo:
-        def get_catalog_fn(kind='data', tracer='LRG', **kwargs):
-            cat_dir = Path('/dvs_ro/cfs/cdirs/desi/mocks/cai/holi/webjax_v4.30/seed0003')
-            if kind == 'data':
-                return cat_dir / f'holi_{tracer}_v4.30_GCcomb_clustering.dat.h5'
-            if kind == 'randoms':
-                return [cat_dir / f'holi_{tracer}_v4.30_GCcomb_0_clustering.ran.h5']
+        version = 'v4.80'
 
-        for tracer in ['LRG']:
-            run_stats(tracer, version='holi-v4.30', weight=weight, stats=stats, stats_dir=stats_dir, get_catalog_fn=get_catalog_fn)
+        def get_catalog_fn(kind='data', tracer='LRG', imock=0, **kwargs):
+            cat_dir = Path(f'/dvs_ro/cfs/cdirs/desi/mocks/cai/holi/webjax_{version}/') / f'seed{imock:04d}'
+            if kind == 'data':
+                return cat_dir / f'holi_{tracer}_{version}_GCcomb_clustering.dat.h5'
+            if kind == 'randoms':
+                return [cat_dir / f'holi_{tracer}_{version}_GCcomb_0_clustering.ran.h5']
+
+        imocks = []
+        for imock in range(100):
+            if all(get_catalog_fn(kind='data', tracer=tracer, imock=imock).exists() for tracer in ['LRG', 'ELG', 'QSO']):
+                imocks.append(imock)
+            if imock > 9: break
+        print(f'Running {imocks}')
+
+        for tracer in ['LRG', 'ELG', 'QSO']:
+            run_stats(tracer, version=f'holi-{version}', weight=weight, stats=stats, stats_dir=stats_dir, get_catalog_fn=get_catalog_fn, imocks=imocks)

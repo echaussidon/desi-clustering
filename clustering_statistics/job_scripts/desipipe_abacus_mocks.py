@@ -69,15 +69,15 @@ def run_stats(tracer='LRG', version='abacus-2ndgen-complete', imocks=[0], stats_
 if __name__ == '__main__':
 
     mode = 'interactive'
-    #stats = ['mesh2_spectrum'] # 'mesh3_spectrum']
-    stats = ['window_mesh2_spectrum']
+    stats = ['mesh2_spectrum'] # 'mesh3_spectrum']
+    #stats = ['window_mesh2_spectrum']
     #stats = ['window_mesh3_spectrum']
     imocks = np.arange(25)
 
     stats_dir = Path('/global/cfs/cdirs/desi/mocks/cai/LSS/DA2/mocks/desipipe')
     version = 'abacus-2ndgen-complete'
     
-    for tracer in ['LRG', 'ELG_LOP', 'QSO']:
+    for tracer in ['BGS_BRIGHT-21.35', 'LRG', 'ELG_LOP', 'QSO'][1:]:
         if False:
             exists, missing = tools.checks_if_exists_and_readable(get_fn=functools.partial(tools.get_catalog_fn, tracer=tracer, region='NGC', version=version), test_if_readable=False, imock=list(range(1001)))[:2]
             imocks = exists[1]['imock']
