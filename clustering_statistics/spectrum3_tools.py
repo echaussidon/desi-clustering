@@ -95,6 +95,23 @@ def compute_mesh3_spectrum(*get_data_randoms, mattrs=None,
     return spectrum
 
 
+def _get_window_edges(mattrs, scales: tuple=(1, 4)):
+    """Return window edges."""
+    distmax, cellmin = np.sqrt(np.sum(mattrs.boxsize**2)), mattrs.cellsize.min()
+    nsizes, cellsizes = [10, 10, None], [cellmin, 4 * cellmin, 10 * cellmin]
+    edges = []
+    for scale in scales:
+        edges_scale = []
+        start = 0.
+        for nsize, cellsize in zip(nsizes, cellsizes):
+            if nsize is None:
+                tmp = np.arange(start, distmax * scale / scales[-1] + cellsize, cellsize)
+            else:
+                tmp = start + np.arange(nsize) * cellsize
+            edges_scale.append(tmp)
+        edges.append(np.concatenate(edges_scale, axis=0))
+    return edges
+
 
 def compute_window_mesh3_spectrum(*get_data_randoms, spectrum, ibatch: tuple=None, computed_batches: list=None, buffer_size=10):
     r"""
@@ -151,14 +168,13 @@ def compute_window_mesh3_spectrum(*get_data_randoms, spectrum, ibatch: tuple=Non
 
     correlations = []
     kw, ellsin = get_smooth3_window_bin_attrs(ells, ellsin=2, fields=fields, return_ellsin=True)
-    #jitted_compute_mesh3_correlation = jax.jit(compute_mesh3_correlation, static_argnames=['los'], donate_argnums=[0])
-    jitted_compute_mesh3_correlation = compute_mesh3_correlation
+    kw['ells'] = [ell for ell in kw['ells'] if all(ell <= 2 for ell in ell)]  # let's remove some terms...
+    jitted_compute_mesh3_correlation = jax.jit(compute_mesh3_correlation, static_argnames=['los'], donate_argnums=[0])
+    #jitted_compute_mesh3_correlation = compute_mesh3_correlation
 
     coords = jnp.logspace(-3, 5, 1024)
-    scales = [1, 4]
-    b, c = mattrs.boxsize.min(), mattrs.cellsize.min()
-    edges = [np.concatenate([np.arange(11) * c, np.arange(11 * c, 0.3 * b, 4 * c)]),
-            np.concatenate([np.arange(11) * scales[1] * c, np.arange(11 * scales[1] * c, 2 * b, 4 * scales[1] * c)])]
+    list_scales = [1, 4]
+    list_edges = _get_window_edges(mattrs, scales=list_scales)
 
     ells = kw['ells']
     if ibatch is not None:
@@ -166,7 +182,7 @@ def compute_window_mesh3_spectrum(*get_data_randoms, spectrum, ibatch: tuple=Non
         kw['ells'] = ells[start:stop]
     if ells and not bool(computed_batches):
         # multigrid calculation
-        for scale, edges in zip(scales, edges):
+        for scale, edges in zip(list_scales, list_edges):
             if jax.process_index() == 0:
                 logger.info(f'Processing scale x{scale:.0f}')
             mattrs2 = mattrs.clone(boxsize=scale * mattrs.boxsize)
@@ -179,13 +195,20 @@ def compute_window_mesh3_spectrum(*get_data_randoms, spectrum, ibatch: tuple=Non
                 alpha = pole.attrs['wsum_data'][0][min(iran, len(all_randoms) - 1)] / randoms.weights.sum()
                 meshes.append(alpha * randoms.paint(**kw_paint, out='real'))
             correlation = jitted_compute_mesh3_correlation(meshes, bin=sbin, los=los).clone(norm=[np.mean(norm)] * len(sbin.ells))
+            jax.block_until_ready(correlation)
             correlation = interpolate_window_function(correlation.unravel(), coords=coords, order=3)
             correlations.append(correlation)
 
         coords = list(next(iter(correlations[0])).coords().values())
-        limit = 0.25 * mattrs.boxsize.min()
-        mask = (coords[0] < limit)[:, None] * (coords[1] < limit)[None, :]
-        weights = [jnp.maximum(mask, 1e-6), jnp.maximum(~mask, 1e-6)]
+        masks = [(coords[0] < edges[-1])[:, None] * (coords[1] < edges[-1])[None, :] for edges in list_edges[:-1]]
+        masks.append((coords[0] < np.inf)[:, None] * (coords[1] < np.inf)[None, :])
+        weights = []
+        for mask in masks:
+            if len(weights):
+                weights.append(mask & (~weights[-1]))
+            else:
+                weights.append(mask)
+        weights = [np.maximum(mask, 1e-6) for mask in weights]
         correlation = correlations[0].sum(correlations, weights=weights)
 
     if computed_batches:

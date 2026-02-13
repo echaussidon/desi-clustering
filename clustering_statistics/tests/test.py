@@ -113,10 +113,17 @@ def test_cross(stats=['mesh2_spectrum']):
 
 
 def test_window(stats=['mesh2_spectrum']):
+    from jaxpower import get_mesh_attrs
+    from clustering_statistics.tools import propose_fiducial
+    from clustering_statistics.spectrum3_tools import _get_window_edges
+    mattrs = get_mesh_attrs(boxcenter=0., **propose_fiducial(kind='mesh2_spectrum', tracer='QSO')['mattrs'])
+    for edges in _get_window_edges(mattrs, scales=(1, 4)):
+        print(edges)
+    exit()
     stats_dir = Path(Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks')
     for stat in stats:
-        for tracer in ['LRG'][:0]:
-            zranges = [(0.8, 1.1)]
+        for tracer in ['QSO']:
+            zranges = [(0.8, 2.1)]
             for region in ['NGC', 'SGC'][:1]:
                 catalog_options = dict(version='holi-v1-altmtl', tracer=tracer, zrange=zranges, region=region, imock=451, nran=1)
                 #catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default-FKP', nran=1)
@@ -154,7 +161,7 @@ if __name__ == '__main__':
     jax.distributed.initialize()
     setup_logging()
 
-    test_window(stats=['mesh2_spectrum'])
+    test_window(stats=['mesh3_spectrum'])
     exit()
     test_stats_fn()
     test_auw(stats=['mesh2_spectrum'])

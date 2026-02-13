@@ -341,8 +341,6 @@ def compute_window_mesh2_spectrum(*get_data_randoms, spectrum, optimal_weights=N
     ells = spectrum.ells
     mattrs = {name: spectrum.attrs[name] for name in ['boxsize', 'boxcenter', 'meshsize']}
     los = spectrum.attrs['los']
-    print(spectrum.get(0).attrs['wsum_data'], spectrum.get(2).attrs['wsum_data'])
-    exit()
     ellsin = [0, 2, 4]
     kw_paint = dict(resampler='tsc', interlacing=3, compensate=True)
 
@@ -480,7 +478,6 @@ def compute_window_mesh2_spectrum(*get_data_randoms, spectrum, optimal_weights=N
                 results[key] = results[key][0].clone(value=value, observable=observable)  # join multipoles
 
     return results
-
 
 
 def compute_box_mesh2_spectrum(get_data, get_shifted=None, ells=(0, 2, 4), los='z', cache=None, **attrs):

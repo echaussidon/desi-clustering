@@ -27,7 +27,7 @@ output, error = 'slurm_outputs/glam-uchuu_mocks/slurm-%j.out', 'slurm_outputs/gl
 kwargs = {}
 tmp_dir = Path(os.getenv('SCRATCH'), 'tmp')
 tmp_dir.mkdir(exist_ok=True)
-environ = Environment('nersc-cosmodesi', {'TMPDIR': tmp_dir, 'XLA_FLAGS': f'"--xla_gpu_cuda_data_dir={tmp_dir} --xla_dump_to={tmp_dir}"'})  # to avoid jax.errors.JaxRuntimeError: NOT_FOUND: /tmp/tempfile-nid008481-f65eab9791d225ca-724696-648e288b2979c
+environ = Environment('nersc-cosmodesi', {'TMPDIR': tmp_dir})  # to avoid jax.errors.JaxRuntimeError: NOT_FOUND: /tmp/tempfile-nid008481-f65eab9791d225ca-724696-648e288b2979c
 tm = TaskManager(queue=queue, environ=environ)
 tm = tm.clone(scheduler=dict(max_workers=25), provider=dict(provider='nersc', time='01:30:00',
                             mpiprocs_per_worker=4, output=output, error=error, stop_after=1, constraint='gpu'))
