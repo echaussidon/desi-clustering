@@ -29,7 +29,7 @@ tmp_dir = Path(os.getenv('SCRATCH'), 'tmp')
 tmp_dir.mkdir(exist_ok=True)
 environ = Environment('nersc-cosmodesi', {'TMPDIR': tmp_dir, 'XLA_FLAGS': f'"--xla_gpu_cuda_data_dir={tmp_dir} --xla_dump_to={tmp_dir}"'})  # to avoid jax.errors.JaxRuntimeError: NOT_FOUND: /tmp/tempfile-nid008481-f65eab9791d225ca-724696-648e288b2979c
 tm = TaskManager(queue=queue, environ=environ)
-tm = tm.clone(scheduler=dict(max_workers=25), provider=dict(provider='nersc', time='01:30:00',
+tm = tm.clone(scheduler=dict(max_workers=25), provider=dict(provider='nersc', time='02:00:00',
                             mpiprocs_per_worker=4, output=output, error=error, stop_after=1, constraint='gpu'))
 tm80 = tm.clone(provider=dict(provider='nersc', time='02:00:00',
                             mpiprocs_per_worker=4, output=output, error=error, stop_after=1, constraint='gpu&hbm80g'))
@@ -68,10 +68,10 @@ def run_stats(tracer='LRG', version='glam-uchuu-v1-altmtl', imocks=[100], stats_
                 options['catalog'][tracer]['expand'] = {'parent_randoms_fn': tools.get_catalog_fn(kind='parent_randoms', version='data-dr2-v2', tracer=tracer, nran=options['catalog'][tracer]['nran'])}
                 if noric:
                     options['catalog'][tracer]['reshuffle'] = {'merged_data_fn': tools.get_catalog_fn(kind='data', cat_dir=merged_dir, version=version, tracer=tracer, region='ALL', imock=imock)}
-            compute_stats_from_options(stats, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir, version='', extra='noric' if noric else ''), cache=cache, **options)
+            compute_stats_from_options(stats, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir, extra='noric' if noric else ''), cache=cache, **options)
         jax.experimental.multihost_utils.sync_global_devices('measurements')
         for region_comb, regions in tools.possible_combine_regions(regions).items():
-            combine_stats_from_options(stats, region_comb, regions, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir, version='', extra='noric' if noric else ''), **options)
+            combine_stats_from_options(stats, region_comb, regions, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir, extra='noric' if noric else ''), **options)
     #jax.distributed.shutdown()
 
 
@@ -79,29 +79,29 @@ if __name__ == '__main__':
     
     version = 'glam-uchuu-v1-altmtl'
     
-    # mode = 'slurm'
-    # imocks2run = np.arange(100,150+1)
-    # analysis = 'full_shape'
-    # tracers = ['LRG', 'ELG_LOPnotqso', 'QSO']
-    # stats_dir = Path(f'/global/cfs/cdirs/desi/mocks/cai/LSS/DA2/mocks/desipipe/') / analysis
-    # merged_dir = Path(os.getenv('SCRATCH')) / 'cai-dr2-benchmarks' / version / 'merged'
-    
-    mode = 'interactive'
-    imocks2run = np.arange(100,100+1)
-    analysis = 'png_local'
-    tracers = ['QSO']
+    mode = 'slurm'
+    imocks2run = np.arange(100,150+1)
+    analysis = 'full_shape'
+    tracers  = ['LRG', 'ELG_LOPnotqso', 'QSO']
+    cai_dir    = Path(f'/global/cfs/cdirs/desi/mocks/cai/LSS/DA2/mocks/desipipe/')
+    stats_dir  = cai_dir / analysis
+    merged_dir = cai_dir / version / 'merged'
     noric = False
-
-    stats_dir  = Path(os.getenv('SCRATCH')) / 'cai-dr2-benchmarks' / version / analysis
-    merged_dir = Path(os.getenv('SCRATCH')) / 'cai-dr2-benchmarks' / version / 'merged'
+    
+    # mode = 'interactive'
+    # imocks2run = np.arange(100,100+1)
+    # analysis = 'png_local'
+    # tracers = ['QSO']
+    # noric = False
+    # stats_dir  = Path(os.getenv('SCRATCH')) / 'cai-dr2-benchmarks' / version / analysis
+    # merged_dir = Path(os.getenv('SCRATCH')) / 'cai-dr2-benchmarks' / version / 'merged'
 
     if analysis == 'full_shape':
         stats   = ['mesh2_spectrum', 'mesh3_spectrum']
         weights = ['default-noimsys-FKP','default-FKP']
     elif analysis == 'png_local':
         stats   = ['mesh2_spectrum']
-        # weights = ['default-noimsys-oqe','default-oqe']
-        weights = ['default-oqe']
+        weights = ['default-noimsys-oqe','default-oqe']
     else:
         raise ValueError(f'{analysis} not supported.')
 
@@ -113,7 +113,8 @@ if __name__ == '__main__':
                 rerun = []
                 for zrange in tools.propose_fiducial('zranges', tracer, analysis=analysis):
                     for kind in stats:
-                        rexists, missing, unreadable = tools.checks_if_exists_and_readable(get_fn=functools.partial(tools.get_stats_fn, kind=kind, stats_dir=stats_dir, tracer=tracer, region='GCcomb', weight=weight, zrange=zrange, extra='noric' if noric else ''), test_if_readable=True, imock=imocks2run)
+                        stats_kws = dict(basis='sugiyama-diagonal', kind=kind, stats_dir=stats_dir, tracer=tracer, region='GCcomb', weight=weight, zrange=zrange, version=version)
+                        rexists, missing, unreadable = tools.checks_if_exists_and_readable(get_fn=functools.partial(tools.get_stats_fn, **stats_kws), test_if_readable=True, imock=imocks2run)
                         rerun += [imock for imock in imocks if (imock in unreadable[1]['imock']) or (imock not in rexists[1]['imock'])]
                 imocks = sorted(set(rerun))
             batch_imocks = np.array_split(imocks, max(len(imocks) // 10, 1)) if len(imocks) else []
