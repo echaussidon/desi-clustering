@@ -879,7 +879,7 @@ def _read_catalog(fn, mpicomm=None, **kwargs):
         try:
             catalog = Catalog.read(fn, group='LSS', mpicomm=mpicomm, **kwargs)
         except KeyError:
-            catalog = Catalog.read(fn, mpicomm=mpicomm)
+            catalog = Catalog.read(fn, mpicomm=mpicomm, **kwargs)
     else:
         catalog = Catalog.read(fn, mpicomm=mpicomm)
     if str(one_fn).endswith('.fits'): catalog.get(catalog.columns())  # Faster to read all columns at once

@@ -107,7 +107,7 @@ def compute_histogram1d(catalog, name='Z', edges=None, backend: str='numpy'):
 
 def plot_density_projections(get_catalog_fn=tools.get_catalog_fn, read_catalog=tools.read_clustering_catalog,
                              catalog=dict(), divide_randoms: bool | str=False, backend: str='numpy', edges=None,
-                             nside=256, fn=None, **kwargs):
+                             nside=256, map_q=False, fn=None, **kwargs):
     """
     Plot angular density projections (HEALPix) and optional redshift distributions.
 
@@ -144,11 +144,10 @@ def plot_density_projections(get_catalog_fn=tools.get_catalog_fn, read_catalog=t
     """
     nest = False
     randoms_hpmap = randoms_hist = None
-    hpmap = 0.
+    hpmaps = []
     edges = edges or {}
     hist_names = list(edges.keys())
     hists = {name: [] for name in hist_names}
-    ndata = 0
     rank = 0
     names, values = zip(*kwargs.items())
     for values in itertools.product(*values):
@@ -170,12 +169,9 @@ def plot_density_projections(get_catalog_fn=tools.get_catalog_fn, read_catalog=t
             data_hpmap = data_hpmap / randoms_hpmap * randoms_hpmap.sum() / data_hpmap.sum()
             for name in hist_names:
                 data_hist[name] = data_hist[name] / randoms_hist[name] * randoms_hist[name].sum() / data_hist[name].sum()
-        hpmap += data_hpmap
-        ndata += 1
+        hpmaps.append(data_hpmap)
         for name in hists:
             hists[name].append(data_hist[name])
-
-    hpmap = hpmap / ndata
 
     # --- Layout decisions ---
     with_bottom = len(hist_names) > 0
@@ -188,10 +184,38 @@ def plot_density_projections(get_catalog_fn=tools.get_catalog_fn, read_catalog=t
         ncols=ncols,
         height_ratios=height_ratios
     )
+    from scipy.stats import chi2 as chi2_dist
+
+    def _annotate_chi2(ax, chi2, ndof, *, loc="upper left"):
+        """Write reduced chi2 and p-value on an axes."""
+        if ndof <= 0 or not np.isfinite(chi2):
+            return
+        rchi2 = chi2 / ndof
+        pval = chi2_dist.sf(chi2, ndof)  # upper-tail p-value
+        text = rf"$\chi^2_\nu={rchi2:.2f}$" + "\n" + rf"$p={pval:.3g}$"
+        # place in axes coordinates
+        x = 0.02 if "left" in loc else 0.98
+        y = 0.98 if "upper" in loc else 0.02
+        ha = "left" if "left" in loc else "right"
+        va = "top" if "upper" in loc else "bottom"
+        ax.text(x, y, text, transform=ax.transAxes, ha=ha, va=va,
+                bbox=dict(boxstyle="round,pad=0.25", facecolor="white", alpha=0.8, edgecolor="none"))
+
     # --- Top row: Mollweide map ---
     ax_map = fig.add_subplot(gs[0, 0])
     plt.sca(ax_map)
-    hp.mollview(hpmap, hold=True, cbar=True, nest=nest)
+    mean = np.mean(hpmaps, axis=0)
+    mask = np.isfinite(mean)
+    if divide_randoms:
+        err = np.std(hpmaps, axis=0, ddof=0) / np.sqrt(len(hpmaps))
+        residuals = (mean - 1.) / err
+        chi2 = np.sum(residuals[mask]**2)
+    if map_q:
+        limits = np.quantile(residuals[mask], q=map_q)
+        mean = residuals = np.clip(residuals, *limits)
+    hp.mollview(mean, hold=True, cbar=True, nest=nest)
+    if divide_randoms:
+        _annotate_chi2(ax_map, chi2, mask.sum() - 1, loc="upper left")
     # --- Bottom row: 1D histograms ---
     if with_bottom:
         sub = gs[1, 0].subgridspec(1, len(hist_names), wspace=0.35)
@@ -200,15 +224,23 @@ def plot_density_projections(get_catalog_fn=tools.get_catalog_fn, read_catalog=t
             e = np.asarray(edges[name])
             x = 0.5 * (e[:-1] + e[1:])
             mean = np.mean(hists[name], axis=0)
-            std = np.std(hists[name], axis=0, ddof=0) / np.sqrt(len(hists[name]))
+            mask = np.isfinite(mean)
+            err = np.std(hists[name], axis=0, ddof=0) / np.sqrt(len(hists[name]))
             # step-style histogram
-            ax.plot(x, mean, color='k')
-            ax.fill_between(x, mean - std, mean + std, color='k', alpha=0.2)
             ax.set_xlabel(name)
             if divide_randoms:
+                residuals = (mean - 1.) / err
+                chi2 = np.sum(residuals[mask]**2)
+                ax.plot(x, residuals, color='k')
                 ax.grid(True)
-            if iname == 0:
-                ax.set_ylabel("counts")
+                if iname == 0:
+                    ax.set_ylabel(r"$(\mathrm{mean} - 1) / \sigma$")
+                _annotate_chi2(ax, chi2, mask.sum() - 1, loc="upper left")
+            else:
+                ax.plot(x, mean, color='k')
+                ax.fill_between(x, mean - std, mean + std, color='k', alpha=0.2)
+                if iname == 0:
+                    ax.set_ylabel('counts')
 
     if fn is not None:
         plt.tight_layout()
