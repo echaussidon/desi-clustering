@@ -136,7 +136,7 @@ def compute_mesh2_spectrum(*get_data_randoms, mattrs=None, cut=None, auw=None,
         Functions that return tuples of (data, randoms, [shifted]) catalogs.
         See :func:`prepare_jaxpower_particles` for details.
     mattrs : dict, optional
-        Mesh attributes to define the :class:`jaxpower.ParticleField` objects. If None, default attributes are used.
+        Mesh attributes to define the :class:`jaxpower.ParticleField` objects.
         See :func:`prepare_jaxpower_particles` for details.
     cut : bool, optional
         If True, apply a theta-cut of (0, 0.05) in degrees.
@@ -377,6 +377,7 @@ def compute_window_mesh2_spectrum(*get_data_randoms, spectrum: types.Mesh2Spectr
             jitted_compute_mesh2_correlation = jax.jit(compute_mesh2_correlation, static_argnames=['los'], donate_argnums=[0])
             # Window computed in configuration space, summing Bessel over the Fourier-space mesh
             coords = jnp.logspace(-3, 5, 4 * 1024)
+            list_edges = []
             for scale in [1, 4]:
                 mattrs2 = mattrs.clone(boxsize=scale * mattrs.boxsize)
                 meshes = []
@@ -384,14 +385,22 @@ def compute_window_mesh2_spectrum(*get_data_randoms, spectrum: types.Mesh2Spectr
                     randoms = randoms.exchange(backend='mpi')
                     alpha = pole.attrs['wsum_data'][isum][min(iran, len(all_randoms) - 1)] / randoms.weights.sum()
                     meshes.append(alpha * randoms.paint(**kw_paint, out='real'))
-                sbin = BinMesh2CorrelationPoles(mattrs2, edges=np.arange(0., mattrs2.boxsize.min() / 2., mattrs2.cellsize.min()), **kw_window, basis='bessel')
+                edges = np.arange(0., mattrs2.boxsize.min() / 2., mattrs2.cellsize.min())
+                list_edges.append(edges)
+                sbin = BinMesh2CorrelationPoles(mattrs2, edges=edges, **kw_window, basis='bessel')
                 correlation = jitted_compute_mesh2_correlation(meshes, bin=sbin, los=los).clone(norm=[np.mean(norm)] * len(sbin.ells))
                 del meshes
                 correlation = interpolate_window_function(correlation, coords=coords, order=3)
                 correlations.append(correlation)
-            limits = [0, 0.4 * mattrs.boxsize.min(), 2. * mattrs.boxsize.max()]
-            weights = [jnp.maximum((coords >= limits[i]) & (coords < limits[i + 1]), 1e-10) for i in range(len(limits) - 1)]
-
+            masks = [coords < edges[-1] for edges in list_edges[:-1]]
+            masks.append((coords < np.inf))
+            weights = []
+            for mask in masks:
+                if len(weights):
+                    weights.append(mask & (~weights[-1]))
+                else:
+                    weights.append(mask)
+            weights = [np.maximum(mask, 1e-6) for mask in weights]
             results['window_mesh2_correlation_raw'] = correlation = correlations[0].sum(correlations, weights=weights)
 
             window = compute_smooth2_spectrum_window(correlation, edgesin=edgesin, ellsin=ellsin, bin=bin, flags=('fftlog',))
@@ -537,7 +546,7 @@ def compute_theory_for_covariance_mesh2_spectrum(data: types.Mesh2SpectrumPoles=
     return smooth
 
 
-def compute_covariance_mesh2_spectrum(*get_data_randoms, theory=None, mattrs=None):
+def compute_covariance_mesh2_spectrum(*get_data_randoms, theory=None, fields=None, mattrs=None):
     r"""
     Compute the 2-point spectrum covariance with :mod:`jaxpower`.
 
@@ -546,31 +555,42 @@ def compute_covariance_mesh2_spectrum(*get_data_randoms, theory=None, mattrs=Non
     get_data_randoms : callables
         Functions that return tuples of (data, randoms) catalogs.
         See :func:`prepare_jaxpower_particles` for details.
-    spectrum : Mesh2SpectrumPoles
-        Measured 2-point spectrum multipoles.
+    theory : Mesh2SpectrumPoles
+        Theory 2-point spectrum multipoles.
+    fields : tuple, list, optional
+        Field names.
+    mattrs : dict, optional
+        Mesh attributes to define the :class:`jaxpower.ParticleField` objects.
+        See :func:`prepare_jaxpower_particles` for details.
 
     Returns
     -------
     covarance : CovarianceMatrix
         The computed 2-point spectrum covariance.
     """
-    from jaxpower import compute_fkp2_covariance_window, interpolate_window_function, compute_spectrum2_covariance
+    from jaxpower import create_sharding_mesh, compute_fkp2_covariance_window, interpolate_window_function, compute_spectrum2_covariance
     kw_paint = dict(resampler='tsc', interlacing=3, compensate=True)
     kw = dict(los='local', edges={'step': mattrs.cellsize.min()}, basis='bessel') if fftlog else dict(edges={})
+    if fields is None:
+        fields = list(range(1, 1 + len(get_data_randoms)))
 
-    all_particles = prepare_jaxpower_particles(*get_data_randoms, mattrs=mattrs, add_randoms=['IDS'])
-    fftlog = False
-    windows = compute_fkp2_covariance_window(all_particles, **kw, **kw_paint)
-    if fftlog:
-        coords = np.logspace(-2, 8, 8 * 1024)
-        windows = [interpolate_window_function(window, coords=coords) for window in windows]
+    results = {}
+    with create_sharding_mesh(meshsize=mattrs.get('meshsize', None)):
+        all_particles = prepare_jaxpower_particles(*get_data_randoms, mattrs=mattrs, add_randoms=['IDS'], fields=fields)
+        fftlog = False
+        windows = compute_fkp2_covariance_window(all_particles, **kw, **kw_paint)
+        if fftlog:
+            coords = np.logspace(-2, 8, 8 * 1024)
+            windows = [interpolate_window_function(window, coords=coords) for window in windows]
+        results['window_covariance_mesh2_correlation'] = types.ObservableTree(windows, types=['WW', 'WS', 'SS'])
+
     # delta is the maximum abs(k1 - k2) where the covariance will be computed (to speed up calculation)
-    covs_analytical = compute_spectrum2_covariance(windows, theory, flags=['smooth'] + (['fftlog'] if fftlog else []))
+    covs_analytical = compute_spectrum2_covariance(list(windows), theory, flags=['smooth'] + (['fftlog'] if fftlog else []))
 
     # Sum all contributions (WW, WS, SS), with W = standard window (multiplying delta), S = shotnoise
     # Here we assumed randoms have a negligible contribution to the shot noise in the measurements
-    cov = covs_analytical[0].clone(value=sum(cov.value() for cov in covs_analytical))
-    return cov
+    results['raw'] = covs_analytical[0].clone(value=sum(cov.value() for cov in covs_analytical))
+    return results
 
 
 def compute_rotation_mesh2_spectrum(window: types.WindowMatrix, covariance: types.CovarianceMatrix, Minit: str='momt',
@@ -687,7 +707,7 @@ def compute_box_mesh2_cross_spectrum(get_data, get_data2, get_shifted=None, get_
         The computed 2-point cross-spectrum multipoles.
     """
     import jax
-    from jaxpower import (ParticleField, compute_box2_normalization, BinMesh2SpectrumPoles, get_mesh_attrs, compute_mesh2_spectrum)
+    from jaxpower import (ParticleField, FKPField, compute_box2_normalization, BinMesh2SpectrumPoles, get_mesh_attrs, compute_mesh2_spectrum)
     mattrs = get_mesh_attrs(boxcenter=0., **attrs)
     if cache is None: cache = {}
     bin = cache.get('bin_mesh2_spectrum', None)

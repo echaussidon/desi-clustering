@@ -137,6 +137,22 @@ def test_window(stats=['mesh2_spectrum']):
                 compute_stats_from_options([stat, f'window_{stat}'], catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), mesh2_spectrum={}, window_mesh2_spectrum={'cut': True}, analysis='png_local')
 
 
+def test_covariance():
+    stats_dir = Path(Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks')
+    stats = ['covariance_mesh2_spectrum']
+    for tracer in ['LRG']:
+        zranges = [(0.8, 1.1)]
+        for region in ['NGC', 'SGC']:
+            catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default-FKP', nran=1)
+            compute_stats_from_options(stats, catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), mesh2_spectrum={'auw': True, 'cut': True}, analysis='full_shape')
+    stats = ['covariance_mesh2_spectrum']
+    for tracer in [('LRG', 'ELG_LOPnotqso')]:
+        zranges = [(0.8, 1.1)]
+        for region in ['NGC', 'SGC']:
+            catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default-FKP', nran=1)
+            compute_stats_from_options(stats, catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), mesh2_spectrum={'auw': True, 'cut': True}, analysis='full_shape')
+
+
 def test_norm():
     stats_dir = Path(Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks')
     stat = 'mesh3_spectrum'
@@ -160,8 +176,9 @@ if __name__ == '__main__':
     jax.distributed.initialize()
     setup_logging()
 
-    test_window(stats=['mesh3_spectrum'])
-    exit()
+    test_covariance()
+    #test_window(stats=['mesh3_spectrum'])
+
     test_stats_fn()
     test_auw(stats=['mesh2_spectrum'])
     test_bitwise(stats=['mesh2_spectrum'])

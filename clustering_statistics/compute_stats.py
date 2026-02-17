@@ -2,6 +2,7 @@ import os
 import logging
 import functools
 from pathlib import Path
+import itertools
 
 import numpy as np
 import jax
@@ -10,7 +11,7 @@ import lsstypes as types
 from . import tools
 from .tools import fill_fiducial_options, _merge_options, Catalog, setup_logging
 from .correlation2_tools import compute_angular_upweights, compute_particle2_correlation
-from .spectrum2_tools import compute_mesh2_spectrum, compute_window_mesh2_spectrum
+from .spectrum2_tools import compute_mesh2_spectrum, compute_window_mesh2_spectrum, compute_covariance_mesh2_spectrum, compute_theory_for_covariance_mesh2_spectrum
 from .spectrum3_tools import compute_mesh3_spectrum, compute_window_mesh3_spectrum
 from .recon_tools import compute_reconstruction
 
@@ -106,7 +107,7 @@ def compute_stats_from_options(stats, analysis='full_shape', cache=None,
 
         data[tracer] = read_clustering_catalog(kind='data', **_catalog_options, concatenate=True)
         randoms[tracer] = read_clustering_catalog(kind='randoms', **_catalog_options, cache=cache, concatenate=False)
-    
+
     if with_recon:
         # data_rec, randoms_rec = {}, {}
         for tracer in tracers:
@@ -222,7 +223,7 @@ def compute_stats_from_options(stats, analysis='full_shape', cache=None,
                     nbatch = window_options.get('computed_batches', False)
                     if nbatch:
                         fns = [get_stats_fn(kind=key, catalog=fn_catalog_options, **(window_options | dict(auw=False, cut=False, extra=get_extra(ibatch, nbatch)))) for ibatch in range(nbatch)]
-                        window_options['computed_branches'] = [types.read(fn) for fn in fns]
+                        window_options['computed_batches'] = [types.read(fn) for fn in fns]
 
                     window = func(*[functools.partial(get_data, tracer) for tracer in tracers], spectrum=spectrum, **window_options)
                     for key, kw in _expand_cut_auw_options(stat, window_options).items():
@@ -233,6 +234,64 @@ def compute_stats_from_options(stats, analysis='full_shape', cache=None,
                         if 'correlation' in key:  # window functions
                             fn = get_stats_fn(kind=key, catalog=fn_catalog_options, **(window_options | dict(auw=False, cut=False, extra=extra)))
                             tools.write_stats(fn, window[key])
+
+            funcs = {'covariance_mesh2_spectrum': compute_covariance_mesh2_spectrum}
+
+            for stat, func in funcs.items():
+                if stat in stats:
+                    covariance_options = dict(kwargs[stat])
+                    theory_stat = stat.replace('covariance_', 'theory_')
+                    theory_fn = covariance_options.get('theory', None)
+
+                    def _check_fn(fn, tracers, name=''):
+                        if len(tracers) == 1:
+                            fn = {(tracer, tracer): fn for tracer in tracers}
+                        else:
+                            raise ValueError(f'provide a dictionary of (tracer1, tracer2): {name} for tracer1, tracer2 in {tracers}')
+                        return fn
+
+                    def _read_tracer(fns, tracers2):
+                        if tracers2 not in fns: tracers2 = tracers2[::-1]
+                        return types.read(fns[tracers2])
+
+                    if theory_fn is None:
+                        products_fn = {}
+                        # Collect power spectrum and window
+                        for name in ['spectrum', 'window']:
+                            fn_stat = stat.replace('covariance_', '') if name == 'spectrum' else stat.replace('covariance_', f'{name}_')
+                            fn = covariance_options.pop(name, None)
+                            if fn is None:
+                                kw = kwargs[fn_stat] | dict(auw=False, cut=False)
+                                fn = {(tracer, tracer): get_stats_fn(kind=fn_stat, catalog=fn_catalog_options[tracer], **kw) for tracer in tracers}
+                                if len(tracers) > 1:
+                                    fn[tuple(tracers)] = get_stats_fn(kind=fn_stat, catalog=fn_catalog_options, **kw)
+                            elif not isinstance(fn, dict):
+                                _check_fn(fn, tracers, name=name)
+                            products_fn[name] = fn
+
+                        theory_fn = {}
+                        for tracers2 in itertools.combinations(tracers, 2):
+                            spectrum = _read_tracer(products_fn['spectrum'], tracers2)
+                            window = _read_tracer(products_fn['window'], tracers2)
+                            theory = compute_theory_for_covariance_mesh2_spectrum(data=spectrum, window=window)
+                            theory_fn[tracers2] = get_stats_fn(kind=theory_stat, catalog=(fn_catalog_options[tracers2[0]] if tracers2[1] == tracers2[0] else {tracer: fn_catalog_options[tracer] for tracer in tracers2}))
+                            tools.write(theory_fn[tracers2], theory)
+                    else:
+                        _check_fn(theory_fn, tracers, name='theory')
+
+                    jax.experimental.multihost_utils.sync_global_devices('theory')  # such that theory ready for window
+                    fields = {tracer: tools.get_simple_tracer(tracer) for tracer in tracers}
+                    theory = {tuple(fields[tracer] for tracer in tracers2): _read_tracer(theory_fn, tracers2) for tracers2 in itertools.combinations(tracers, 2)}
+                    theory = types.ObservableTree(list(theory.values()), fields=list(theory.keys()))
+                    covariance = func(*[functools.partial(get_data, tracer) for tracer in tracers], theory=theory, fields=list(fields.values()), **covariance_options)
+                    for key, kw in _expand_cut_auw_options(stat, covariance_options).items():
+                        fn = get_stats_fn(kind=stat, catalog=fn_catalog_options, **kw)
+                        if key in covariance:
+                            tools.write_stats(fn, covariance[key])
+                    for key in covariance:
+                        if 'correlation' in key:  # window functions
+                            fn = get_stats_fn(kind=key, catalog=fn_catalog_options, **(covariance_options | dict(auw=False, cut=False)))
+                            tools.write_stats(fn, covariance[key])
 
 
 def list_stats(stats, get_stats_fn=tools.get_stats_fn, **kwargs):

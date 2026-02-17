@@ -462,6 +462,10 @@ def fill_fiducial_options(kwargs, analysis='full_shape'):
             spectrum_options = options[stat.replace('window_', '')]
             spectrum_options = {key: value for key, value in spectrum_options.items() if key in ['selection_weights', 'optimal_weights']}
             options[stat] = spectrum_options | options.get(stat, {})
+        for stat in ['covariance_mesh2_spectrum']:
+            spectrum_options = options[stat.replace('covariance_', '')]
+            spectrum_options = {key: value for key, value in spectrum_options.items() if key in ['mattrs']}
+            options[stat] = spectrum_options | options.get(stat, {})
     return options
 
 
@@ -690,12 +694,18 @@ def get_stats_fn(stats_dir=Path(os.getenv('SCRATCH')) / 'measurements', kind='me
     corr_type = 'smu'
     battrs = kwargs.get('battrs', None)
     if battrs is not None: corr_type = ''.join(list(battrs))
-    kind = {'mesh2_spectrum': 'mesh2_spectrum_poles',
-            'particle2_correlation': f'particle2_correlation_{corr_type}'}.get(kind, kind)
-    if 'mesh3' in kind:
+    if 'particle2_correlation' in kind:
+        kind = f'particle2_correlation_{corr_type}'
+    if 'mesh2_spectrum' in kind:
+        full = 'mesh2_spectrum_poles'
+        if full not in kind:
+            kind = kind.replace('mesh2_spectrum', full)
+    if 'mesh3_spectrum' in kind:
         basis = kwargs.get('basis', None)
         basis = f'_{basis}' if basis else ''
-        kind = f'mesh3_spectrum{basis}_poles'
+        full = f'mesh3_spectrum{basis}_poles'
+        if full not in kind:
+            kind = kind.replace('mesh3_spectrum', full)
     basename = f'{kind}_{tracer}{zrange}_{region}_weight-{weight}{auw}{cut}{extra}{imock}.{ext}'
     return stats_dir / basename
 
