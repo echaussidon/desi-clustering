@@ -75,14 +75,14 @@ def get_lensing_options(sample):
     # following https://github.com/cosmodesi/DESI_Y3_x_CMB/tree/28bf7661a6ed02f81397d5db93d87344cd47d0d2/configs
     options = {'healpix_nside': 2048}
     if sample == 'act_dr6':
-        base_dir = "/dvs_ro/cfs/projectdirs/act/www/dr6_lensing_v1/"
-        options['file'] = os.path.join(base_dir,'maps/baseline/mask_act_dr6_lensing_v1_healpix_nside_4096_baseline.fits')
+        base_dir = Path('/dvs_ro/cfs/projectdirs/act/www/dr6_lensing_v1/')
+        options['file'] = base_dir / 'maps/baseline/mask_act_dr6_lensing_v1_healpix_nside_4096_baseline.fits/'
         options['is_cmb_mask'] = True
         options['galactic_coordinates'] = False
         return options
     if sample == 'planck_pr4':
-        base_dir = "/dvs_ro/cfs/cdirs/cmb/data/planck2020/PR4_lensing/"
-        options['file'] = os.path.join(base_dir, "mask.fits.gz")
+        base_dir = Path('/dvs_ro/cfs/cdirs/cmb/data/planck2020/PR4_lensing/')
+        options['file'] = base_dir / 'mask.fits.gz'
         options['is_cmb_mask'] = False
         options['galactic_coordinates'] = True
         return options
@@ -106,6 +106,34 @@ def get_lensing_footprint(sample, threshold=0.1):
     return lensing_mask > threshold
 
 
+def get_galactic_mask(ra, dec, galactic_fraction_percent='GAL040'):
+    # https://github.com/cosmodesi/DESI_Y3_x_CMB/blob/28bf7661a6ed02f81397d5db93d87344cd47d0d2/scripts/DR2_analysis_utils.py#L122
+    import healpy as hp
+    from astropy.coordinates import SkyCoord
+    import astropy.units as u
+    # Path to Planck Galactic plane mask
+    # TODO: Move file to a CAI directory
+    mask_path = Path('/pscratch/sd/a/arosado/auxiliary/') / 'HFI_Mask_GalPlane-apo0_2048_R2.00.fits'
+    galactic_mask = Catalog.read(mask_path)
+    
+    # Read mask and determine ordering from FITS header
+    is_nested = (galactic_mask.header['ORDERING'] == 'NESTED')
+    mask = galactic_mask[galactic_fraction_percent]
+
+    # Convert input positions from ecliptic to galactic coordinates
+    # Assumes data['RA'] and data['DEC'] are ecliptic longitude/latitude in degrees
+    coords = SkyCoord(ra=ra, dec=dec, unit='deg', frame='icrs')
+    l = coords.galactic.l.to(u.deg).value
+    b = coords.galactic.b.to(u.deg).value
+
+    # Map galactic (l,b) to HEALPix pixel
+    nside = hp.get_nside(mask)
+    th = (90.0 - b) * np.pi / 180.0
+    phi = l * np.pi / 180.0
+    pix = hp.ang2pix(nside, th, phi, nest=is_nested)
+    return mask[pix] > 0
+
+    
 def select_region(ra, dec, region=None):
     """
     Return mask of corresponding R.A./Dec. region.
@@ -132,6 +160,8 @@ def select_region(ra, dec, region=None):
         - 'SGCnoDES': SGC excluding DES footprint
         - 'ACT_DR6': ACT DR6 footprint
         - 'PLANCK_PR4': Planck PR4 footprint
+        - 'GAL020': Planck Galactic masks (e.g., 40% or 60%).
+                    Available options: 'GAL020', 'GAL040', 'GAL060', 'GAL070', 'GAL080', 'GAL090', 'GAL097', 'GAL099'
 
     Returns
     -------
@@ -180,16 +210,20 @@ def select_region(ra, dec, region=None):
     #     return ~mask_des
 
     # Other footprints
-    act = get_lensing_footprint(region.lower())
-    mask_act = act[hp.ang2pix(hp.get_nside(act), ra, dec, nest=True, lonlat=True)]
     if region == 'ACT_DR6':
+        act = get_lensing_footprint(region.lower())
+        mask_act = act[hp.ang2pix(hp.get_nside(act), ra, dec, nest=True, lonlat=True)]
         return mask_act
-    planck = get_lensing_footprint(region.lower())
-    mask_planck = planck[hp.ang2pix(hp.get_nside(planck), ra, dec, nest=True, lonlat=True)]
     if region == 'PLANCK_PR4':
+        planck = get_lensing_footprint(region.lower())
+        mask_planck = planck[hp.ang2pix(hp.get_nside(planck), ra, dec, nest=True, lonlat=True)]
         return mask_planck
+    if 'GAL' in region:
+        mask_galactic = get_galactic_mask(ra, dec, galactic_fraction_percent=region)
+        return mask_galactic
+        
     raise ValueError('unknown region {}'.format(region))
-
+   
 
 def _make_tuple(item, n=None):
     if not isinstance(item, (list, tuple)):
@@ -512,10 +546,12 @@ def get_catalog_fn(version=None, cat_dir=None, kind='data', tracer='LRG',
         Catalog filename(s).
         Multiple filenames are returned as a list when region is 'ALL' or when kind is 'randoms' or 'full_randoms'.
     """
+    # these are region splits that require loading NGC+SGC
+    special_regions = ['S','ALL','SnoDES','ACT_DR6','PLANCK_PR4']+[f'GAL0{i}' for i in [20,40,60,70,80,90,97,99]] 
     if region in ['N', 'NGC', 'NGCnoN']: region = 'NGC'
-    elif region in ['SGC', 'SGCnoDES']: region = 'SGC'
+    elif region in ['SGC', 'SGCnoDES', 'DES']: region = 'SGC'
     elif 'full' not in kind:
-        if region in ['S', 'ALL']: regions = ['NGC', 'SGC']
+        if region in special_regions: regions = ['NGC', 'SGC']
         else: raise NotImplementedError(f'{region} is unknown')
         fn_lists =  [get_catalog_fn(version=version, cat_dir=cat_dir, kind=kind, tracer=tracer,
                                     region=region, weight=weight, nran=nran, imock=imock, ext=ext, **kwargs) for region in regions]
@@ -1058,6 +1094,8 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
     assert kind in ['data', 'randoms'], 'provide kind (data or randoms)'
     zrange, region, weight_type, imock, tracer = (kwargs.get(key) for key in ['zrange', 'region', 'weight', 'imock', 'tracer'])
     assert weight_type is not None, 'provide weight'
+    # these are region splits that require loading NGC+SGC
+    special_regions = ['S','ALL','SnoDES','ACT_DR6','PLANCK_PR4']+[f'GAL0{i}' for i in [20,40,60,70,80,90,97,99]] 
     reshuffle_condition = kind == 'randoms' and (isinstance(reshuffle, dict) or (reshuffle is not None))
     if reshuffle_condition:
         # if randoms are going to be reshuffled, all regions are needed so we force it.
@@ -1065,7 +1103,7 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
     else:
         fns = get_catalog_fn(kind=kind, **kwargs)
     if not isinstance(fns, (tuple, list)): fns = [fns]
-    if region in ['S', 'ALL'] or reshuffle_condition:
+    if region in special_regions or reshuffle_condition:
         # group in pairs (this assumes that fns is a list with the first half corresponds to filenames
         # of one region and the second half to another (e.g., NGC and SGC)
         fns = list(zip(fns[:len(fns)//2],fns[len(fns)//2:])) if len(fns)>1 else fns
