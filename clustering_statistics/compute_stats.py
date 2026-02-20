@@ -2,6 +2,7 @@ import os
 import logging
 import functools
 from pathlib import Path
+import itertools
 
 import numpy as np
 import jax
@@ -10,7 +11,7 @@ import lsstypes as types
 from . import tools
 from .tools import fill_fiducial_options, _merge_options, Catalog, setup_logging
 from .correlation2_tools import compute_angular_upweights, compute_particle2_correlation
-from .spectrum2_tools import compute_mesh2_spectrum, compute_window_mesh2_spectrum
+from .spectrum2_tools import compute_mesh2_spectrum, compute_window_mesh2_spectrum, compute_covariance_mesh2_spectrum, run_preliminary_fit_mesh2_spectrum
 from .spectrum3_tools import compute_mesh3_spectrum, compute_window_mesh3_spectrum
 from .recon_tools import compute_reconstruction
 
@@ -106,135 +107,195 @@ def compute_stats_from_options(stats, analysis='full_shape', cache=None,
 
         data[tracer] = read_clustering_catalog(kind='data', **_catalog_options, concatenate=True)
         randoms[tracer] = read_clustering_catalog(kind='randoms', **_catalog_options, cache=cache, concatenate=False)
-    
-    from jaxpower import create_sharding_mesh
-    with create_sharding_mesh() as sharding_mesh:
-        if with_recon:
-            # data_rec, randoms_rec = {}, {}
-            for tracer in tracers:
-                recon_options = kwargs['recon'][tracer]
-                # local sizes to select positions
-                data[tracer]['POSITION_REC'], randoms_rec_positions = compute_reconstruction(lambda: (data[tracer], Catalog.concatenate(randoms[tracer])), **recon_options)
-                start = 0
-                for random in randoms[tracer]:
-                    size = len(random['POSITION'])
-                    random['POSITION_REC'] = randoms_rec_positions[start:start + size]
-                    start += size
-                randoms[tracer] = randoms[tracer][:catalog_options[tracer]['nran']]  # keep only relevant random files
 
-        # Compute angular upweights
-        if any(kwargs[stat].get('auw', False) for stat in stats):
+    if with_recon:
+        # data_rec, randoms_rec = {}, {}
+        for tracer in tracers:
+            recon_options = kwargs['recon'][tracer]
+            # local sizes to select positions
+            data[tracer]['POSITION_REC'], randoms_rec_positions = compute_reconstruction(lambda: (data[tracer], Catalog.concatenate(randoms[tracer])), **recon_options)
+            start = 0
+            for random in randoms[tracer]:
+                size = len(random['POSITION'])
+                random['POSITION_REC'] = randoms_rec_positions[start:start + size]
+                start += size
+            randoms[tracer] = randoms[tracer][:catalog_options[tracer]['nran']]  # keep only relevant random files
 
-            def get_data(tracer):
-                _catalog_options = catalog_options[tracer] | dict(zrange=None)
-                fibered = read_full_catalog(kind='fibered_data', **_catalog_options)
-                full = read_full_catalog(kind='parent_data', **_catalog_options)
-                return (fibered, full)
+    # Compute angular upweights
+    if any(kwargs[stat].get('auw', False) for stat in stats):
 
-            auw = compute_angular_upweights(*[functools.partial(get_data, tracer) for tracer in tracers])
-            fn_catalog_options = {tracer: catalog_options[tracer] | dict(zrange=None) for tracer in tracers}
-            fn = get_stats_fn(kind='particle2_angular_upweights', catalog=fn_catalog_options)
-            tools.write_stats(fn, auw)
-            for key, kw in kwargs.items():
-                if kw.get('auw', False): kw['auw'] = auw  # update with angular upweights
+        def get_data(tracer):
+            _catalog_options = catalog_options[tracer] | dict(zrange=None)
+            fibered = read_full_catalog(kind='fibered_data', **_catalog_options)
+            full = read_full_catalog(kind='parent_data', **_catalog_options)
+            return (fibered, full)
 
-        for zvals in zip(*(zranges[tracer] for tracer in tracers)):
-            zrange = dict(zip(tracers, zvals))
+        auw = compute_angular_upweights(*[functools.partial(get_data, tracer) for tracer in tracers])
+        fn_catalog_options = {tracer: catalog_options[tracer] | dict(zrange=None) for tracer in tracers}
+        fn = get_stats_fn(kind='particle2_angular_upweights', catalog=fn_catalog_options)
+        tools.write_stats(fn, auw)
+        for key, kw in kwargs.items():
+            if kw.get('auw', False): kw['auw'] = auw  # update with angular upweights
 
-            def get_zcatalog(catalog, zrange):
-                mask = (catalog['Z'] >= zrange[0]) & (catalog['Z'] < zrange[1])
-                return catalog[mask]
+    for zvals in zip(*(zranges[tracer] for tracer in tracers)):
+        zrange = dict(zip(tracers, zvals))
 
-            zdata, zrandoms = {}, {}
-            for tracer in tracers:
-                zdata[tracer] = get_zcatalog(data[tracer], zrange[tracer])
-                zrandoms[tracer] = [get_zcatalog(random, zrange[tracer]) for random in randoms[tracer]]
-            fn_catalog_options = {tracer: catalog_options[tracer] | dict(zrange=zrange[tracer]) for tracer in tracers}
+        def get_zcatalog(catalog, zrange):
+            mask = (catalog['Z'] >= zrange[0]) & (catalog['Z'] < zrange[1])
+            return catalog[mask]
 
-            def get_catalog_recon(catalog):
-                return catalog.clone(POSITION=catalog['POSITION_REC'])
+        zdata, zrandoms = {}, {}
+        for tracer in tracers:
+            zdata[tracer] = get_zcatalog(data[tracer], zrange[tracer])
+            zrandoms[tracer] = [get_zcatalog(random, zrange[tracer]) for random in randoms[tracer]]
+        fn_catalog_options = {tracer: catalog_options[tracer] | dict(zrange=zrange[tracer]) for tracer in tracers}
 
-            for recon in ['', 'recon_']:
-                stat = f'{recon}particle2_correlation'
+        def get_catalog_recon(catalog):
+            return catalog.clone(POSITION=catalog['POSITION_REC'])
+
+        for recon in ['', 'recon_']:
+            stat = f'{recon}particle2_correlation'
+            if stat in stats:
+                correlation_options = kwargs[stat]
+
+                def get_data(tracer):
+                    if recon:
+                        return (get_catalog_recon(zdata[tracer]),
+                                zrandoms[tracer],
+                                [get_catalog_recon(zrandom) for zrandom in zrandoms[tracer]])
+                    return (zdata[tracer], zrandoms[tracer])
+
+                correlation = compute_particle2_correlation(*[functools.partial(get_data, tracer) for tracer in tracers], **correlation_options)
+                fn = get_stats_fn(kind=stat, catalog=fn_catalog_options, **correlation_options)
+                tools.write_stats(fn, correlation)
+
+            funcs = {f'{recon}mesh2_spectrum': compute_mesh2_spectrum, f'{recon}mesh3_spectrum': compute_mesh3_spectrum}
+
+            for stat, func in funcs.items():
                 if stat in stats:
-                    correlation_options = kwargs[stat]
+                    spectrum_options = dict(kwargs[stat])
+                    selection_weights = spectrum_options.pop('selection_weights', None)
 
                     def get_data(tracer):
+                        czrandoms = Catalog.concatenate(zrandoms[tracer])
                         if recon:
-                            return (get_catalog_recon(zdata[tracer]),
-                                    zrandoms[tracer],
-                                    [get_catalog_recon(zrandom) for zrandom in zrandoms[tracer]])
-                        return (zdata[tracer], zrandoms[tracer])
-
-                    correlation = compute_particle2_correlation(*[functools.partial(get_data, tracer) for tracer in tracers], **correlation_options)
-                    fn = get_stats_fn(kind=stat, catalog=fn_catalog_options, **correlation_options)
-                    tools.write_stats(fn, correlation)
-
-                funcs = {f'{recon}mesh2_spectrum': compute_mesh2_spectrum, f'{recon}mesh3_spectrum': compute_mesh3_spectrum}
-
-                for stat, func in funcs.items():
-                    if stat in stats:
-                        spectrum_options = dict(kwargs[stat])
-                        selection_weights = spectrum_options.pop('selection_weights', None)
-
-                        def get_data(tracer):
-                            czrandoms = Catalog.concatenate(zrandoms[tracer])
-                            if recon:
-                                toret = (get_catalog_recon(zdata[tracer]), czrandoms,
-                                         get_catalog_recon(czrandoms))
-                            else:
-                                toret = (zdata[tracer], czrandoms)
-                            if selection_weights:
-                                return tuple(selection_weights[tracer](catalog) for catalog in toret)
-                            return toret
-
-                        spectrum = func(*[functools.partial(get_data, tracer) for tracer in tracers], cache=cache, **spectrum_options)
-                        if not isinstance(spectrum, dict): spectrum = {'raw': spectrum}
-                        for key, kw in _expand_cut_auw_options(stat, spectrum_options).items():
-                            fn = get_stats_fn(kind=stat, catalog=fn_catalog_options, **kw)
-                            tools.write_stats(fn, spectrum[key])
-
-                jax.experimental.multihost_utils.sync_global_devices('spectrum')  # such that spectrum ready for window
-                funcs = {'window_mesh2_spectrum': compute_window_mesh2_spectrum, 'window_mesh3_spectrum': compute_window_mesh3_spectrum}
-
-                for stat, func in funcs.items():
-                    if stat in stats:
-                        window_options = dict(kwargs[stat])
-                        selection_weights = window_options.pop('selection_weights', None)
-
-                        def get_data(tracer):
-                            czrandoms = Catalog.concatenate(zrandoms[tracer])
+                            toret = (get_catalog_recon(zdata[tracer]), czrandoms,
+                                     get_catalog_recon(czrandoms))
+                        else:
                             toret = (zdata[tracer], czrandoms)
-                            if selection_weights:
-                                return tuple(selection_weights[tracer](catalog) for catalog in toret)
-                            return toret
+                        if selection_weights:
+                            return tuple(selection_weights[tracer](catalog) for catalog in toret)
+                        return toret
 
-                        spectrum_fn = window_options.pop('spectrum', None)
-                        if spectrum_fn is None:
-                            spectrum_stat = stat.replace('window_', '')
-                            spectrum_fn = get_stats_fn(kind=spectrum_stat, catalog=fn_catalog_options, **(kwargs[spectrum_stat] | dict(auw=False, cut=False)))
-                        spectrum = types.read(spectrum_fn)
+                    spectrum = func(*[functools.partial(get_data, tracer) for tracer in tracers], cache=cache, **spectrum_options)
+                    if not isinstance(spectrum, dict): spectrum = {'raw': spectrum}
+                    for key, kw in _expand_cut_auw_options(stat, spectrum_options).items():
+                        fn = get_stats_fn(kind=stat, catalog=fn_catalog_options, **kw)
+                        tools.write_stats(fn, spectrum[key])
 
-                        def get_extra(ibatch, nbatch):
-                            return f'batch-{ibatch:d}-{nbatch:d}'
+        jax.experimental.multihost_utils.sync_global_devices('spectrum')  # such that spectrum ready for window
+        funcs = {'window_mesh2_spectrum': compute_window_mesh2_spectrum, 'window_mesh3_spectrum': compute_window_mesh3_spectrum}
 
-                        ibatch = window_options.get('ibatch', None)
-                        extra = get_extra(*ibatch) if ibatch is not None else None
+        for stat, func in funcs.items():
+            if stat in stats:
+                window_options = dict(kwargs[stat])
+                selection_weights = window_options.pop('selection_weights', None)
 
-                        nbatch = window_options.get('computed_batches', False)
-                        if nbatch:
-                            fns = [get_stats_fn(kind=key, catalog=fn_catalog_options, **(window_options | dict(auw=False, cut=False, extra=get_extra(ibatch, nbatch)))) for ibatch in range(nbatch)]
-                            window_options['computed_branches'] = [types.read(fn) for fn in fns]
+                def get_data(tracer):
+                    czrandoms = Catalog.concatenate(zrandoms[tracer])
+                    toret = (zdata[tracer], czrandoms)
+                    if selection_weights:
+                        return tuple(selection_weights[tracer](catalog) for catalog in toret)
+                    return toret
 
-                        window = func(*[functools.partial(get_data, tracer) for tracer in tracers], spectrum=spectrum, **window_options)
-                        for key, kw in _expand_cut_auw_options(stat, window_options).items():
-                            fn = get_stats_fn(kind=stat, catalog=fn_catalog_options, **kw)
-                            if key in window:
-                                tools.write_stats(fn, window[key])
-                        for key in window:
-                            if 'correlation' in key:  # window functions
-                                fn = get_stats_fn(kind=key, catalog=fn_catalog_options, **(window_options | dict(auw=False, cut=False, extra=extra)))
-                                tools.write_stats(fn, window[key])
+                spectrum_fn = window_options.pop('spectrum', None)
+                if spectrum_fn is None:
+                    spectrum_stat = stat.replace('window_', '')
+                    spectrum_fn = get_stats_fn(kind=spectrum_stat, catalog=fn_catalog_options, **(kwargs[spectrum_stat] | dict(auw=False, cut=False)))
+                spectrum = types.read(spectrum_fn)
+
+                def get_extra(ibatch, nbatch):
+                    return f'batch-{ibatch:d}-{nbatch:d}'
+
+                ibatch = window_options.get('ibatch', None)
+                extra = get_extra(*ibatch) if ibatch is not None else None
+
+                nbatch = window_options.get('computed_batches', False)
+                if nbatch:
+                    fns = [get_stats_fn(kind=key, catalog=fn_catalog_options, **(window_options | dict(auw=False, cut=False, extra=get_extra(ibatch, nbatch)))) for ibatch in range(nbatch)]
+                    window_options['computed_batches'] = [types.read(fn) for fn in fns]
+
+                window = func(*[functools.partial(get_data, tracer) for tracer in tracers], spectrum=spectrum, **window_options)
+                for key, kw in _expand_cut_auw_options(stat, window_options).items():
+                    fn = get_stats_fn(kind=stat, catalog=fn_catalog_options, **kw)
+                    if key in window:
+                        tools.write_stats(fn, window[key])
+                for key in window:
+                    if 'correlation' in key:  # window functions
+                        fn = get_stats_fn(kind=key, catalog=fn_catalog_options, **(window_options | dict(auw=False, cut=False, extra=extra)))
+                        tools.write_stats(fn, window[key])
+
+        funcs = {'covariance_mesh2_spectrum': compute_covariance_mesh2_spectrum}
+
+        for stat, func in funcs.items():
+            if stat in stats:
+                covariance_options = dict(kwargs[stat])
+                theory_stat = stat.replace('covariance_', 'theory_')
+                theory_fn = covariance_options.get('theory', None)
+
+                def get_data(tracer):
+                    czrandoms = Catalog.concatenate(zrandoms[tracer])
+                    return (zdata[tracer], czrandoms)
+                
+                def _check_fn(fn, tracers, name=''):
+                    if len(tracers) == 1:
+                        fn = {(tracer, tracer): fn for tracer in tracers}
+                    else:
+                        raise ValueError(f'provide a dictionary of (tracer1, tracer2): {name} for tracer1, tracer2 in {tracers}')
+                    return fn
+
+                def _read_tracer(fns, tracers2):
+                    if tracers2 not in fns: tracers2 = tracers2[::-1]
+                    return types.read(fns[tracers2])
+
+                if theory_fn is None:
+                    products_fn = {}
+                    # Collect power spectrum and window
+                    for name in ['spectrum', 'window']:
+                        fn_stat = stat.replace('covariance_', '') if name == 'spectrum' else stat.replace('covariance_', f'{name}_')
+                        fn = covariance_options.pop(name, None)
+                        if fn is None:
+                            kw = kwargs[fn_stat] | dict(auw=False, cut=False)
+                            fn = {(tracer, tracer): get_stats_fn(kind=fn_stat, catalog=fn_catalog_options[tracer], **kw) for tracer in tracers}
+                            if len(tracers) > 1:
+                                fn[tuple(tracers)] = get_stats_fn(kind=fn_stat, catalog=fn_catalog_options, **kw)
+                        elif not isinstance(fn, dict):
+                            _check_fn(fn, tracers, name=name)
+                        products_fn[name] = fn
+
+                    theory_fn = {}
+                    for tracers2 in itertools.combinations_with_replacement(tracers, r=2):
+                        spectrum = _read_tracer(products_fn['spectrum'], tracers2)
+                        window = _read_tracer(products_fn['window'], tracers2)
+                        theory = run_preliminary_fit_mesh2_spectrum(data=spectrum, window=window)
+                        theory_fn[tracers2] = get_stats_fn(kind=theory_stat, catalog=(fn_catalog_options[tracers2[0]] if tracers2[1] == tracers2[0] else {tracer: fn_catalog_options[tracer] for tracer in tracers2}))
+                        tools.write_stats(theory_fn[tracers2], theory)
+                else:
+                    _check_fn(theory_fn, tracers, name='theory')
+
+                jax.experimental.multihost_utils.sync_global_devices('theory')  # such that theory ready for window
+                fields = {tracer: tools.get_simple_tracer(tracer) for tracer in tracers}
+                theory = {tuple(fields[tracer] for tracer in tracers2): _read_tracer(theory_fn, tracers2) for tracers2 in itertools.product(tracers, repeat=2)}
+                theory = types.ObservableTree(list(theory.values()), fields=list(theory.keys()))
+                covariance = func(*[functools.partial(get_data, tracer) for tracer in tracers], theory=theory, fields=list(fields.values()), **covariance_options)
+                for key, kw in _expand_cut_auw_options(stat, covariance_options).items():
+                    fn = get_stats_fn(kind=stat, catalog=fn_catalog_options, **kw)
+                    if key in covariance:
+                        tools.write_stats(fn, covariance[key])
+                for key in covariance:
+                    if 'correlation' in key:  # window functions
+                        fn = get_stats_fn(kind=key, catalog=fn_catalog_options, **(covariance_options | dict(auw=False, cut=False)))
+                        tools.write_stats(fn, covariance[key])
 
 
 def list_stats(stats, get_stats_fn=tools.get_stats_fn, **kwargs):

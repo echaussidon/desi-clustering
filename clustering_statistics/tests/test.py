@@ -117,13 +117,12 @@ def test_window(stats=['mesh2_spectrum']):
     from clustering_statistics.tools import propose_fiducial
     from clustering_statistics.spectrum3_tools import _get_window_edges
     mattrs = get_mesh_attrs(boxcenter=0., **propose_fiducial(kind='mesh2_spectrum', tracer='QSO')['mattrs'])
-    for edges in _get_window_edges(mattrs, scales=(1, 4)):
-        print(edges)
-    exit()
+    #for edges in _get_window_edges(mattrs, scales=(1, 4)):
+    #    print(edges, len(edges))
     stats_dir = Path(Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks')
     for stat in stats:
-        for tracer in ['QSO']:
-            zranges = [(0.8, 2.1)]
+        for tracer in ['LRG']:
+            zranges = [(0.8, 1.1)]
             for region in ['NGC', 'SGC'][:1]:
                 catalog_options = dict(version='holi-v1-altmtl', tracer=tracer, zrange=zranges, region=region, imock=451, nran=1)
                 #catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default-FKP', nran=1)
@@ -136,6 +135,21 @@ def test_window(stats=['mesh2_spectrum']):
                 catalog_options = dict(version='holi-v1-altmtl', tracer=tracer, zrange=zranges, region=region, imock=451, nran=1)
                 #catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default-FKP', nran=1)
                 compute_stats_from_options([stat, f'window_{stat}'], catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), mesh2_spectrum={}, window_mesh2_spectrum={'cut': True}, analysis='png_local')
+
+
+def test_covariance():
+    stats_dir = Path(Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks')
+    stats = ['mesh2_spectrum', 'window_mesh2_spectrum', 'covariance_mesh2_spectrum'][2:]
+    for tracer in ['LRG', 'ELG_LOPnotqso'][:0]:
+        zranges = [(0.8, 1.1)]
+        for region in ['NGC', 'SGC'][:1]:
+            catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default-FKP', nran=1)
+            compute_stats_from_options(stats, catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), mesh2_spectrum={'auw': True, 'cut': True})
+    for tracer in [('LRG', 'ELG_LOPnotqso')]:
+        zranges = [(0.8, 1.1)]
+        for region in ['NGC', 'SGC'][:1]:
+            catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default-FKP', nran=1)
+            compute_stats_from_options(stats, catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), mesh2_spectrum={'auw': True, 'cut': True})
 
 
 def test_norm():
@@ -161,8 +175,9 @@ if __name__ == '__main__':
     jax.distributed.initialize()
     setup_logging()
 
-    test_window(stats=['mesh3_spectrum'])
-    exit()
+    test_covariance()
+    #test_window(stats=['mesh3_spectrum'])
+
     test_stats_fn()
     test_auw(stats=['mesh2_spectrum'])
     test_bitwise(stats=['mesh2_spectrum'])
