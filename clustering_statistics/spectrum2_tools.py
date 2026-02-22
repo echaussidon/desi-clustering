@@ -587,7 +587,7 @@ def compute_covariance_mesh2_spectrum(*get_data_randoms, theory=None, fields=Non
         The computed 2-point spectrum covariance.
     """
     from jaxpower import create_sharding_mesh, compute_fkp2_covariance_window, interpolate_window_function, compute_spectrum2_covariance, FKPField
-    fftlog = False
+    fftlog = True
     if fields is None:
         fields = list(range(1, 1 + len(get_data_randoms)))
     results = {}
@@ -601,15 +601,11 @@ def compute_covariance_mesh2_spectrum(*get_data_randoms, theory=None, fields=Non
         windows = compute_fkp2_covariance_window(all_fkp, **kw, **kw_paint)
         if fftlog:
             coords = np.logspace(-2, 8, 8 * 1024)
-            windows = [interpolate_window_function(window, coords=coords) for window in windows]
-        results['window_covariance_mesh2_correlation'] = types.ObservableTree(windows, types=['WW', 'WS', 'SS'])
+            windows = windows.map(lambda window: interpolate_window_function(window, coords=coords), level=1)
+        results['window_covariance_mesh2_correlation'] = windows
 
     # delta is the maximum abs(k1 - k2) where the covariance will be computed (to speed up calculation)
-    covs_analytical = compute_spectrum2_covariance(list(windows), theory, flags=['smooth'] + (['fftlog'] if fftlog else []))
-
-    # Sum all contributions (WW, WS, SS), with W = standard window (multiplying delta), S = shotnoise
-    # Here we assumed randoms have a negligible contribution to the shot noise in the measurements
-    results['raw'] = covs_analytical[0].clone(value=sum(cov.value() for cov in covs_analytical))
+    results['raw'] = compute_spectrum2_covariance(windows, theory, flags=['smooth'] + (['fftlog'] if fftlog else []))
     return results
 
 
