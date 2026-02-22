@@ -175,9 +175,6 @@ if __name__ == '__main__':
     jax.distributed.initialize()
     setup_logging()
 
-    test_covariance()
-    #test_window(stats=['mesh3_spectrum'])
-
     test_stats_fn()
     test_auw(stats=['mesh2_spectrum'])
     test_bitwise(stats=['mesh2_spectrum'])
@@ -188,4 +185,5 @@ if __name__ == '__main__':
     #test_spectrum3()
     test_norm()
     test_recon()
+    test_covariance()
     #jax.distributed.shutdown()
