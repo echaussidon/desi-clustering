@@ -12,7 +12,7 @@ import jax
 import numpy as np
 import lsstypes as types
 
-from clustering_statistics import tools, setup_logging, compute_stats_from_options
+from clustering_statistics import tools, setup_logging, compute_stats_from_options, postprocess_stats_from_options
 
 
 def test_stats_fn(stats=['mesh2_spectrum']):
@@ -37,7 +37,7 @@ def test_stats_fn(stats=['mesh2_spectrum']):
 
 
 def test_auw(stats=['mesh2_spectrum']):
-    stats_dir = Path(Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks')
+    stats_dir = Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks'
     for tracer in ['LRG']:
         zranges = tools.propose_fiducial('zranges', tracer)
         for region in ['NGC', 'SGC']:
@@ -47,7 +47,7 @@ def test_auw(stats=['mesh2_spectrum']):
 
 
 def test_bitwise(stats=['mesh2_spectrum']):
-    stats_dir = Path(Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks')
+    stats_dir = Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks'
     for tracer in ['LRG']:
         zranges = tools.propose_fiducial('zranges', tracer)
         for region in ['NGC', 'SGC']:
@@ -57,7 +57,7 @@ def test_bitwise(stats=['mesh2_spectrum']):
 
 
 def test_spectrum3(stats=['mesh3_spectrum']):
-    stats_dir = Path(Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks')
+    stats_dir = Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks'
     for tracer in ['LRG']:
         zranges = tools.propose_fiducial('zranges', tracer)
         for region in ['NGC', 'SGC']:
@@ -67,7 +67,7 @@ def test_spectrum3(stats=['mesh3_spectrum']):
 
 
 def test_recon(stat='recon_particle2_correlation'):
-    stats_dir = Path(Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks')
+    stats_dir = Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks'
     stat = 'mesh2_spectrum'
     for tracer in ['LRG']:
         zrange = tools.propose_fiducial('zranges', tracer)[0]
@@ -78,7 +78,7 @@ def test_recon(stat='recon_particle2_correlation'):
 
 
 def test_expand_randoms(stat='mesh2_spectrum'):
-    stats_dir = Path(Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks')
+    stats_dir = Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks'
     stat = 'mesh2_spectrum'
     for tracer in ['LRG']:
         zrange = tools.propose_fiducial('zranges', tracer)[0]
@@ -94,7 +94,7 @@ def test_expand_randoms(stat='mesh2_spectrum'):
 
 
 def test_optimal_weights(stats=['mesh2_spectrum']):
-    stats_dir = Path(Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks')
+    stats_dir = Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks'
     for tracer in ['LRG']:
         zranges = tools.propose_fiducial('zranges', tracer)[:1]
         for region in ['NGC', 'SGC']:
@@ -104,7 +104,7 @@ def test_optimal_weights(stats=['mesh2_spectrum']):
 
 
 def test_cross(stats=['mesh2_spectrum']):
-    stats_dir = Path(Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks')
+    stats_dir = Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks'
     for tracer in [('LRG', 'ELG_LOPnotqso')]:
         zranges = [(0.8, 1.1)]
         for region in ['NGC', 'SGC']:
@@ -119,7 +119,7 @@ def test_window(stats=['mesh2_spectrum']):
     mattrs = get_mesh_attrs(boxcenter=0., **propose_fiducial(kind='mesh2_spectrum', tracer='QSO')['mattrs'])
     #for edges in _get_window_edges(mattrs, scales=(1, 4)):
     #    print(edges, len(edges))
-    stats_dir = Path(Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks')
+    stats_dir = Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks'
     for stat in stats:
         for tracer in ['LRG']:
             zranges = [(0.8, 1.1)]
@@ -138,7 +138,7 @@ def test_window(stats=['mesh2_spectrum']):
 
 
 def test_covariance():
-    stats_dir = Path(Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks')
+    stats_dir = Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks'
     stats = ['mesh2_spectrum', 'window_mesh2_spectrum', 'covariance_mesh2_spectrum'][2:]
     for tracer in ['LRG', 'ELG_LOPnotqso'][:0]:
         zranges = [(0.8, 1.1)]
@@ -152,8 +152,26 @@ def test_covariance():
             compute_stats_from_options(stats, catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), mesh2_spectrum={'auw': True, 'cut': True})
 
 
+def test_rotation():
+    stats_dir = Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks'
+    stats = ['mesh2_spectrum', 'window_mesh2_spectrum', 'covariance_mesh2_spectrum'][1:2]
+    postprocess = ['rotation_mesh2_spectrum']
+    for tracer in ['LRG', 'ELG_LOPnotqso'][:0]:
+        zranges = [(0.8, 1.1)]
+        for region in ['NGC', 'SGC'][:1]:
+            catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default-FKP', nran=1)
+            #compute_stats_from_options(stats, catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), mesh2_spectrum={'cut': True}, window_mesh2_spectrum={'cut': True})
+            postprocess_stats_from_options(postprocess, catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), rotation_mesh2_spectrum={'data': dict(version='data-dr1-v1.5'), 'theory': dict(version='data-dr1-v1.5')})
+    for tracer in [('LRG', 'ELG_LOPnotqso')]:
+        zranges = [(0.8, 1.1)]
+        for region in ['NGC', 'SGC'][:1]:
+            catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default-FKP', nran=1)
+            #compute_stats_from_options(stats, catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), mesh2_spectrum={'auw': True, 'cut': True}, window_mesh2_spectrum={'cut': True})
+            postprocess_stats_from_options(postprocess, catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), rotation_mesh2_spectrum={'data': dict(version='data-dr1-v1.5'), 'theory': dict(version='data-dr1-v1.5')})
+
+
 def test_norm():
-    stats_dir = Path(Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks')
+    stats_dir = Path(os.getenv('SCRATCH') / 'clustering-measurements-checks')
     stat = 'mesh3_spectrum'
     for tracer in ['BGS_BRIGHT-21.5']:
         zrange = tools.propose_fiducial('zranges', tracer)[0]
@@ -169,12 +187,16 @@ def test_norm():
 
 if __name__ == '__main__':
 
-    os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.9'
+    os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.8'
     from jax import config
     config.update('jax_enable_x64', False)
     jax.distributed.initialize()
     setup_logging()
 
+    #test_covariance()
+    test_rotation()
+    exit()
+    #test_window()
     test_stats_fn()
     test_auw(stats=['mesh2_spectrum'])
     test_bitwise(stats=['mesh2_spectrum'])

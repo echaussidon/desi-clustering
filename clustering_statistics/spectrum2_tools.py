@@ -605,12 +605,16 @@ def compute_covariance_mesh2_spectrum(*get_data_randoms, theory=None, fields=Non
         results['window_covariance_mesh2_correlation'] = windows
 
     # delta is the maximum abs(k1 - k2) where the covariance will be computed (to speed up calculation)
-    results['raw'] = compute_spectrum2_covariance(windows, theory, flags=['smooth'] + (['fftlog'] if fftlog else []))
+    covariance = compute_spectrum2_covariance(windows, theory, flags=['smooth'] + (['fftlog'] if fftlog else []))
+    fields = covariance.observable.fields
+    observable = types.ObservableTree(list(covariance.observable), observables=['spectrum2'] * len(fields), tracers=fields)  
+    covariance = covariance.clone(observable=observable)
+    results['raw'] = covariance
     return results
 
 
 def compute_rotation_mesh2_spectrum(window: types.WindowMatrix, covariance: types.CovarianceMatrix, Minit: str='momt',
-                                    data: types.Mesh2SpectrumPoles=None, theory: types.Mesh2SpectrumPoles=None):
+                                    data: types.Mesh2SpectrumPoles=None, theory: types.Mesh2SpectrumPoles=None, select: dict=None):
     """
     Compute the rotation to make the window matrix more diagonal.
 
@@ -632,7 +636,18 @@ def compute_rotation_mesh2_spectrum(window: types.WindowMatrix, covariance: type
     rotation : WindowRotationSpectrum2
     """
     from jaxpower import WindowRotationSpectrum2
-    covariance = covariance.at.observable.match(window.observable)
+    observable = window.observable
+    if data is not None:
+        if select is not None:
+            data = data.select(**select)
+        observable = data
+    window = window.at.observable.match(observable)
+    if theory is not None:
+        def interpolate_pole(ref, pole):
+            return ref.clone(value=np.interp(ref.coords('k'), pole.coords('k'), pole.value()))
+        
+        theory = window.theory.map(lambda pole, label: interpolate_pole(pole, theory.get(ells=label['ells'])), input_label=True, level=1)
+    covariance = covariance.at.observable.match(observable)
     rotation = WindowRotationSpectrum2(window=window, covariance=covariance, xpivot=0.1)
     rotation.setup(Minit=Minit)
     rotation.fit()

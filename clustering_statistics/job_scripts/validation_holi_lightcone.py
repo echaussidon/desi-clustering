@@ -53,7 +53,7 @@ def run_stats(tracer='LRG', zranges=None, version='holi-v4.80', weight='default-
         for imock in imocks:
             regions = ['NGC', 'SGC'][:1]
             for region in regions:
-                options = dict(catalog=dict(version=version, tracer=tracer, zrange=zranges, region=region, weight=weight, imock=imock), mesh2_spectrum={'cut': True, 'auw': True if 'altmtl' in version or 'data' in version else None}, **kw)
+                options = dict(catalog=dict(version=version, tracer=tracer, zrange=zranges, region=region, weight=weight, imock=imock, nran=18), mesh2_spectrum={'cut': True, 'auw': True if 'altmtl' in version or 'data' in version else None}, **kw)
                 options = fill_fiducial_options(options, analysis='full_shape_protected' if 'data' in version else 'full_shape')
                 if 'uchuu-hf-complete' in version:
                     for tracer in options['catalog']:
@@ -74,9 +74,9 @@ def plot_density(imock=[0], tracer='LRG', zranges=None, version='holi-v4.80', we
     for zrange in [None]:
         edges = {'RA': np.linspace(0., 360., 361),
                  'DEC': np.linspace(-90., 90., 181)}
-        def read_catalog(kind='data', **kwargs):
-            fn = get_catalog_fn(kind=kind, **kwargs)
-            return tools._read_catalog(fn)
+        #def read_catalog(kind='data', **kwargs):
+        #    fn = get_catalog_fn(kind=kind, **kwargs)
+        #    return tools._read_catalog(fn)
         catalog = dict(version=version, tracer=tracer, zrange=zrange, region=region, weight=weight)
         plot_density_projections(get_catalog_fn=get_catalog_fn, read_catalog=read_catalog, divide_randoms='same', catalog=catalog,
                                  imock=imock, edges={name: edges[name] for name in ['RA', 'DEC']}, fn=plots_dir / f'angular_density_fluctuations_{version}_weight-{weight}_{tracer}_{region}.png', nside=nside, map_q=(0.1, 0.9))
@@ -92,7 +92,22 @@ def plot_density(imock=[0], tracer='LRG', zranges=None, version='holi-v4.80', we
                                  imock=imock, edges=edges, fn=plots_dir / f'density_{version}_weight-{weight}_{tracer}_{region}_z{zrange[0]:.1f}-{zrange[1]:.1f}.png', nside=nside)
 
 
-def fit_large_scales(imock=0, tracer='LRG', zranges=None, version='holi-v4.80', weight='default', stats_dir=stats_dir, plots_dir=plots_dir, get_catalog_fn=tools.get_catalog_fn):
+def make_merged_random_catalog(imocks=[], tracer='LRG', version='v4.80', stats_dir=stats_dir, nran=18, get_catalog_fn=tools.get_catalog_fn):
+    all_z = []
+    for imock in imocks:
+        fn = get_catalog_fn(kind='data', tracer=tracer, version=version, imock=imock)
+        z = tools._read_catalog(fn)['Z']
+        all_z.append(z)
+    all_z = np.concatenate(all_z, axis=0)
+    rng = np.random.RandomState(seed=42)
+    for iran in range(nran):
+        fn = f'/dvs_ro/cfs/cdirs/desi/survey/catalogs/DA2/LSS/rands_intiles_DARK_nomask_{iran:d}.fits'
+        randoms = tools._read_catalog(fn)
+        randoms['Z'] = rng.choice(all_z, size=randoms.size, replace=True)
+        randoms.write(get_catalog_fn(kind='randoms', tracer=tracer, version=version, iran=iran))
+
+
+def fit_large_scales(imock=0, tracer='LRG', zranges=None, version='v4.80', weight='default', stats_dir=stats_dir, plots_dir=plots_dir, get_catalog_fn=tools.get_catalog_fn):
     import jax
     from jax import config
     config.update('jax_enable_x64', True)
@@ -163,6 +178,7 @@ if __name__ == '__main__':
 
     #todo = ['test']
     #todo = ['density']
+    #todo = ['randoms']
     todo = ['large_scales']
     weight = 'default'
     stats = ['mesh2_spectrum', 'mesh3_spectrum_sugiyama', 'mesh3_spectrum_scoccimarro', 'window_mesh2_spectrum'][:1]
@@ -182,16 +198,26 @@ if __name__ == '__main__':
         run_stats(('LRG', 'QSO'), **kw, stats_dir=stats_dir)
         run_stats(('ELG_LOPnotqso', 'QSO'), **kw, stats_dir=stats_dir)
 
-    def get_holi_catalog_fn(kind='data', tracer='LRG', imock=0, version='v4.00', **kwargs):
+    def get_holi_catalog_fn(kind='data', tracer='LRG', imock=0, version='v4.00', nran=18, **kwargs):
         if version == 'v4.00':
             cat_dir = Path(f'/dvs_ro/cfs/cdirs/desi/mocks/cai/holi/{version}/') / f'seed{imock:04d}'
+            if kind == 'data':
+                return cat_dir / f'holi_{tracer}_{version}_GCcomb_clustering.dat.h5'
+            if kind == 'randoms':
+                return [stats_dir / f'holi_{tracer}_{version}_GCcomb_0_clustering.ran.h5']
         else:
             cat_dir = Path(f'/dvs_ro/cfs/cdirs/desi/mocks/cai/holi/webjax_{version}/') / f'seed{imock:04d}'
-        if kind == 'data':
-            return cat_dir / f'holi_{tracer}_{version}_GCcomb_clustering.dat.h5'
-        if kind == 'randoms':
-            return [cat_dir / f'holi_{tracer}_{version}_GCcomb_0_clustering.ran.h5']
-    
+            if kind == 'data':
+                return cat_dir / f'holi_{tracer}_{version}_GCcomb_clustering.dat.h5'
+            if kind == 'randoms':
+                cat_dir = Path(os.getenv('SCRATCH')) / 'cai' / 'holi_lightcone_validation'
+                return [cat_dir / f'holi_{tracer}_{version}_GCcomb_{iran:d}_clustering.ran.h5' for iran in range(nran)]
+
+    if 'randoms' in todo:
+        imocks = list(range(12))
+        for tracer in ['LRG']:
+            make_merged_random_catalog(imocks=imocks, tracer=tracer, version='v4.80', stats_dir=stats_dir, nran=18, get_catalog_fn=get_holi_catalog_fn)
+
     if 'test' in todo:
         #version = 'v4.00'
         version = 'v4.80'
@@ -201,7 +227,7 @@ if __name__ == '__main__':
         for imock in range(1000):
             if all(get_holi_catalog_fn(kind='data', tracer=tracer, version=version, imock=imock).exists() for tracer in tracers for kind in ['data']):
                 imocks.append(imock)
-            if len(imocks) > 9: break
+            if len(imocks) > 11: break
         print(f'Running {imocks}')
 
         for tracer in tracers:
@@ -213,16 +239,6 @@ if __name__ == '__main__':
         version = 'v4.80'
         #version = 'v4.00'
         tracers = ['LRG', 'ELG', 'QSO'][:1]
-
-        def get_holi_catalog_fn(kind='data', tracer='LRG', imock=0, version='v4.00', nran=1, **kwargs):
-            if version == 'v4.00':
-                cat_dir = Path(f'/dvs_ro/cfs/cdirs/desi/mocks/cai/holi/{version}/') / f'seed{imock:04d}'
-            else:
-                cat_dir = Path(f'/dvs_ro/cfs/cdirs/desi/mocks/cai/holi/webjax_{version}/') / f'seed{imock:04d}'
-            if kind == 'data':
-                return cat_dir / f'holi_{tracer}_{version}_GCcomb_clustering.dat.h5'
-            if kind == 'randoms':
-                return [f'/dvs_ro/cfs/cdirs/desi/survey/catalogs/DA2/LSS/rands_intiles_DARK_nomask_{iran:d}.fits' for iran in range(nran)]
         
         imocks = []
         for imock in range(1000):

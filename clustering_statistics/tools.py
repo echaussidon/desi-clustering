@@ -55,7 +55,7 @@ def join_tracers(tracers):
 
 
 def get_simple_tracer(tracer):
-    """Given import tracer, return simple tracer name; e.g. 'ELG_LOPnotqso' would result in 'ELG'."""
+    """Given input tracer, return simple tracer name; e.g. 'ELG_LOPnotqso' would result in 'ELG'."""
     if 'BGS' in tracer:
         return 'BGS'
     elif 'LRG+ELG' in tracer:
@@ -68,6 +68,18 @@ def get_simple_tracer(tracer):
         return 'QSO'
     else:
         raise NotImplementedError(f'tracer {tracer} is unknown')
+
+
+def get_simple_stats(stats):
+    """Given input stats name, return simple stats name; e.g. 'mesh2_spectrum' would result in 'spectrum2'."""
+    if stats == 'mesh2_spectrum':
+        return 'spectrum2'
+    elif stats == 'mesh3_spectrum':
+        return 'spectrum3'
+    elif stats == 'particle2_correlation':
+        return 'correlation2'
+    else:
+        raise NotImplementedError(f'stats {stats} is unknown')
 
 
 def get_lensing_options(sample):
@@ -431,6 +443,7 @@ def propose_fiducial(kind, tracer, zrange=None, analysis='full_shape'):
         propose_fiducial[stat]['mattrs'] = {'boxpad': 1.2, 'cellsize': recon_cellsize, 'primes': primes, 'divisors': divisors}
     for name in list(propose_fiducial):
         propose_fiducial[f'recon_{name}'] = propose_fiducial[name]  # same for post-recon measurements
+    propose_fiducial['rotation_mesh2_spectrum'] = {'select': {'k': slice(0, None, 5)}}
     return propose_fiducial[kind]
 
 
@@ -467,6 +480,36 @@ def _zip_catalog_options(catalog, squeeze=True):
     return toret
 
 
+def _merge_catalog_options(options1, options2, zipped=(None, None)):
+    """Merge 2 catalog options, zipped or unzipped, and return merged unzipped catalog options."""
+    options = [dict(options1), dict(options2)]
+    zipped = list(zipped)
+
+    def _is_zipped(i):
+        if zipped[i] is not None:
+            return zipped[i]
+        return (not len(options[i])) or any(name in options[i] for name in ['tracer', 'version', 'region', 'zrange', 'weight', 'imock'])
+
+    def _find_tracer(i):
+        if _is_zipped(i):
+            return options[i].get('tracer', None)
+        else:
+            return list(options[i].keys())
+
+    tracers = _find_tracer(1)
+    if tracers is None:
+        tracers = _find_tracer(0)
+    if _is_zipped(1):
+        options[1]['tracer'] = tracers
+        options[1] = _unzip_catalog_options(options[1])
+    if _is_zipped(0):
+        options[0]['tracer'] = tracers
+        options[0] = _unzip_catalog_options(options[0])
+    tracers1, tracers2 = list(options[0].keys()), list(options[1].keys())
+    assert tracers2 == tracers1, f'input tracers {tracers2} and {tracers1} are not compatible'
+    return {tracer: options[0][tracer] | options[1][tracer] for tracer in options[0]}
+
+
 def fill_fiducial_options(kwargs, analysis='full_shape'):
     """Fill missing options with fiducial values."""
     options = {key: dict(value) for key, value in kwargs.items()}
@@ -500,6 +543,9 @@ def fill_fiducial_options(kwargs, analysis='full_shape'):
             spectrum_options = options[stat.replace('covariance_', '')]
             spectrum_options = {key: value for key, value in spectrum_options.items() if key in ['mattrs']}
             options[stat] = spectrum_options | options.get(stat, {})
+        for stat in ['rotation_mesh2_spectrum']:
+            fiducial_options = propose_fiducial(stat, tracer=tracers, analysis=analysis)
+            options[stat] = fiducial_options | options.get(stat, {})
     return options
 
 
@@ -690,12 +736,12 @@ def get_stats_fn(stats_dir=Path(os.getenv('SCRATCH')) / 'measurements', kind='me
     _default_options = dict(version=None, tracer=None, region=None, zrange=None, weight=None, imock=None)
     catalog_options = kwargs.pop('catalog', {})
     if not catalog_options:
-        catalog_options = {key: kwargs.get(key, _default_options[key]) for key, value in _default_options.items()}
-        catalog_options = _unzip_catalog_options(catalog_options)
+        kwargs_options = {key: kwargs.pop(key, _default_options[key]) for key, value in _default_options.items()}
+        catalog_options = _unzip_catalog_options(kwargs_options)
     else:
-        catalog_options = _unzip_catalog_options(catalog_options)
-        _default_options.pop('tracer')
-        catalog_options = {tracer: _default_options | catalog_options[tracer] for tracer in catalog_options}
+        catalog_options = _merge_catalog_options(catalog_options, {key: kwargs.pop(key) for key in kwargs if key in _default_options}, zipped=[None, True])
+        for tracer in catalog_options:
+            catalog_options[tracer].setdefault('imock', None)
     catalog_options = _zip_catalog_options(catalog_options, squeeze=False)
     imock = catalog_options['imock']
     if imock[0] and imock[0] == '*':
@@ -705,13 +751,13 @@ def get_stats_fn(stats_dir=Path(os.getenv('SCRATCH')) / 'measurements', kind='me
     stats_dir = Path(stats_dir)
 
     def join_if_not_none(f, key):
-        items = catalog_options[key]
+        items = catalog_options.get(key, (None,))
         if any(item is not None for item in items):
             return join_tracers(tuple(f(item) for item in items if item is not None))
         return ''
 
     def check_is_not_none(key):
-        items = catalog_options[key]
+        items = catalog_options.get(key, (None,))
         assert all(item is not None for item in items), f'provide {key}'
         return items
 
@@ -1341,12 +1387,18 @@ def read_full_catalog(kind, wntile=None, concatenate=True,
         return rdw
 
 
-def write_stats(fn, stats):
+def write_stats(filename, stats):
     """Write summary statistics to file from process 0 only."""
     import jax
+    filename = Path(filename)
+    tmp_filename = filename.with_name(filename.stem + '.tmp' + filename.suffix)
     if jax.process_index() == 0:
-        logger.info(f'Writing to {fn}')
-        stats.write(fn)
+        stats.write(tmp_filename)
+    import jax.experimental.multihost_utils
+    jax.experimental.multihost_utils.sync_global_devices(str(filename))
+    if jax.process_index() == 0:
+        logger.info(f'Writing {filename}')
+        os.replace(tmp_filename, filename)
 
 
 def possible_combine_regions(regions):
@@ -1456,7 +1508,7 @@ def combine_stats(observables):
     return observable
 
 
-def merge_catalogs(output, inputs, factor=1., seed=42, read_catalog=_read_catalog, **kwargs):
+def merge_catalogs(output: str | Path, inputs: list[str | Path], factor: float=1., seed: int=42, read_catalog=_read_catalog, **kwargs):
     import numpy as np
     from mockfactory import Catalog
     inputs = list(inputs)
@@ -1478,7 +1530,7 @@ def merge_catalogs(output, inputs, factor=1., seed=42, read_catalog=_read_catalo
     catalog.write(output)
 
 
-def merge_randoms_catalogs(output, inputs, parent_randoms_fn=None, factor=1., seed=42,
+def merge_randoms_catalogs(output: str | Path, inputs: list[str | Path], parent_randoms_fn=None, factor: float=1., seed=42,
                            read_catalog=_read_catalog, expand_randoms=expand_randoms, **kwargs):
     import numpy as np
     from mockfactory import Catalog
@@ -1510,7 +1562,7 @@ def merge_randoms_catalogs(output, inputs, parent_randoms_fn=None, factor=1., se
 
     with MemoryMonitor() as mem:
         for ifn, fn in enumerate(inputs):
-            print(ifn,fn)
+            print(ifn, fn)
             catalog = read_catalog(fn, **kwargs)
             catalog.get(catalog.columns())
             if expand is not None:
@@ -1523,10 +1575,10 @@ def merge_randoms_catalogs(output, inputs, parent_randoms_fn=None, factor=1., se
             else:
                 csize = catalog.size
                 mask = np.isin(get_uid(catalog['RA'], catalog['DEC']), get_uid(concatenate['RA'], concatenate['DEC']))
-                print(mask.sum(), mask.sum() / mask.size, factor / ncatalogs, ncatalogs)
+                #print(mask.sum(), mask.sum() / mask.size, factor / ncatalogs, ncatalogs)
                 catalog = catalog[~mask]
                 if not catalog.csize: break
-                print(factor * csize / catalog.size / ncatalogs)
+                #print(factor * csize / catalog.size / ncatalogs)
                 mask = rng.uniform(0., 1., catalog.size) < factor * csize / catalog.size / ncatalogs
                 concatenate = Catalog.concatenate(concatenate, catalog[columns][mask])
             mem()
