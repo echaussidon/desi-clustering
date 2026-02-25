@@ -545,7 +545,7 @@ def main(**kwargs):
     cache = {}
     for imock in args.imock:
         catalog_options = dict(version=args.version, cat_dir=args.cat_dir, tracer=args.tracer, zrange=zranges,
-                               weight=args.weight, nran=args.nran, imock=imock)
+                               weight=args.weight, nran=args.nran, imock=imock, ext=None)
         options_imock = _merge_options(fill_fiducial_options(dict(catalog=catalog_options) | options, analysis=args.analysis), kwargs)
 
         for region in args.region:

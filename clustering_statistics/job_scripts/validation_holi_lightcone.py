@@ -53,7 +53,7 @@ def run_stats(tracer='LRG', zranges=None, version='holi-v4.80', weight='default-
         for imock in imocks:
             regions = ['NGC', 'SGC'][:1]
             for region in regions:
-                options = dict(catalog=dict(version=version, tracer=tracer, zrange=zranges, region=region, weight=weight, imock=imock, nran=18), mesh2_spectrum={'cut': True, 'auw': True if 'altmtl' in version or 'data' in version else None}, **kw)
+                options = dict(catalog=dict(version=version, tracer=tracer, zrange=zranges, region=region, weight=weight, imock=imock, nran=18), mesh2_spectrum={}, **kw)
                 options = fill_fiducial_options(options, analysis='full_shape_protected' if 'data' in version else 'full_shape')
                 if 'uchuu-hf-complete' in version:
                     for tracer in options['catalog']:
@@ -70,7 +70,7 @@ def plot_density(imock=[0], tracer='LRG', zranges=None, version='holi-v4.80', we
     if zranges is None:
         zranges = tools.propose_fiducial('zranges', tracer)
     region = 'ALL'
-    
+
     for zrange in [None]:
         edges = {'RA': np.linspace(0., 360., 361),
                  'DEC': np.linspace(-90., 90., 181)}
@@ -104,7 +104,7 @@ def make_merged_random_catalog(imocks=[], tracer='LRG', version='v4.80', stats_d
         fn = f'/dvs_ro/cfs/cdirs/desi/survey/catalogs/DA2/LSS/rands_intiles_DARK_nomask_{iran:d}.fits'
         randoms = tools._read_catalog(fn)
         randoms['Z'] = rng.choice(all_z, size=randoms.size, replace=True)
-        randoms.write(get_catalog_fn(kind='randoms', tracer=tracer, version=version, iran=iran))
+        randoms.write(get_catalog_fn(kind='randoms', tracer=tracer, version=version)[iran])
 
 
 def fit_large_scales(imock=0, tracer='LRG', zranges=None, version='v4.80', weight='default', stats_dir=stats_dir, plots_dir=plots_dir, get_catalog_fn=tools.get_catalog_fn):
@@ -176,10 +176,10 @@ def fit_large_scales(imock=0, tracer='LRG', zranges=None, version='v4.80', weigh
 
 if __name__ == '__main__':
 
-    #todo = ['test']
+    todo = ['test']
     #todo = ['density']
     #todo = ['randoms']
-    todo = ['large_scales']
+    #todo = ['large_scales']
     weight = 'default'
     stats = ['mesh2_spectrum', 'mesh3_spectrum_sugiyama', 'mesh3_spectrum_scoccimarro', 'window_mesh2_spectrum'][:1]
 
@@ -213,24 +213,27 @@ if __name__ == '__main__':
                 cat_dir = Path(os.getenv('SCRATCH')) / 'cai' / 'holi_lightcone_validation'
                 return [cat_dir / f'holi_{tracer}_{version}_GCcomb_{iran:d}_clustering.ran.h5' for iran in range(nran)]
 
+    def list_existing_imocks(nmocks, version='v4.80', tracers=('LRG', 'ELG', 'QSO')):
+        imocks = []
+        for imock in range(1000):
+            if all(get_holi_catalog_fn(kind=kind, tracer=tracer, version=version, imock=imock).exists() for tracer in tracers for kind in ['data']):
+                imocks.append(imock)
+            if len(imocks) > nmocks: break
+        print(f'Running {imocks}')
+        return imocks
+
     if 'randoms' in todo:
-        imocks = list(range(12))
-        for tracer in ['LRG']:
-            make_merged_random_catalog(imocks=imocks, tracer=tracer, version='v4.80', stats_dir=stats_dir, nran=18, get_catalog_fn=get_holi_catalog_fn)
+        for tracer in ['LRG', 'ELG', 'QSO'][:1]:
+            version = 'v4.80'
+            make_merged_random_catalog(imocks=imocks, tracer=tracer, version=version, stats_dir=stats_dir, nran=18, get_catalog_fn=get_holi_catalog_fn)
 
     if 'test' in todo:
         #version = 'v4.00'
         version = 'v4.80'
         tracers = ['LRG', 'ELG', 'QSO'][:1]
 
-        imocks = []
-        for imock in range(1000):
-            if all(get_holi_catalog_fn(kind='data', tracer=tracer, version=version, imock=imock).exists() for tracer in tracers for kind in ['data']):
-                imocks.append(imock)
-            if len(imocks) > 11: break
-        print(f'Running {imocks}')
-
         for tracer in tracers:
+            imocks = list_existing_imocks(100, version=version, tracers=[tracer])
             if any('window' in stat for stat in stats):
                 imocks = [1]
             run_stats(tracer, version=version, weight=weight, stats=stats, stats_dir=stats_dir, get_catalog_fn=get_holi_catalog_fn, imocks=imocks)
@@ -239,13 +242,8 @@ if __name__ == '__main__':
         version = 'v4.80'
         #version = 'v4.00'
         tracers = ['LRG', 'ELG', 'QSO'][:1]
-        
-        imocks = []
-        for imock in range(1000):
-            if all(get_holi_catalog_fn(kind=kind, tracer=tracer, version=version, imock=imock).exists() for tracer in tracers for kind in ['data']):
-                imocks.append(imock)
-            if len(imocks) > 40: break
-        print(f'Running {imocks}')
+
+        imocks = list_existing_imocks(11, tracers=tracers)
         for tracer in tracers:
             plot_density(imock=imocks, tracer=tracer, version=version, weight='default', get_catalog_fn=get_holi_catalog_fn)
 

@@ -68,7 +68,7 @@ def postprocess_stats(tracer='LRG', version='abacus-2ndgen-complete', imocks=[0]
     from clustering_statistics import postprocess_stats_from_options
     zranges = tools.propose_fiducial('zranges', tracer)
     get_stats_fn = functools.partial(tools.get_stats_fn, stats_dir=stats_dir)
-    options = dict(catalog=dict(version=version, tracer=tracer, zrange=zranges, imock=0), imocks=imocks, combine_regions={'stats': ['mesh2_spectrum', 'mesh3_spectrum', 'window_mesh2_spectrum'][-1:]}, window_mesh2_spectrum={'cut': True})
+    options = dict(catalog=dict(version=version, tracer=tracer, zrange=zranges, imock=0), imocks=imocks, combine_regions={'stats': ['mesh2_spectrum', 'mesh3_spectrum', 'window_mesh2_spectrum', 'covariance_mesh2_spectrum']}, mesh2_spectrum={'cut': True}, window_mesh2_spectrum={'cut': True})
     postprocess_stats_from_options(postprocess, get_stats_fn=get_stats_fn, **options)
 
 
@@ -77,10 +77,12 @@ if __name__ == '__main__':
     mode = 'interactive'
     #mode = 'slurm'
     stats, postprocess = [], []
-    stats = ['mesh2_spectrum'] # 'mesh3_spectrum']
+    #stats = ['mesh2_spectrum'] # 'mesh3_spectrum']
     #stats = ['window_mesh2_spectrum']
+    #stats = ['covariance_mesh2_spectrum']
     #stats = ['window_mesh3_spectrum']
     #postprocess = ['combine_regions']
+    postprocess = ['rotation_mesh2_spectrum']
     imocks = np.arange(25)
 
     stats_dir = Path('/global/cfs/cdirs/desi/mocks/cai/LSS/DA2/mocks/desipipe')
