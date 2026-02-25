@@ -176,10 +176,10 @@ def fit_large_scales(imock=0, tracer='LRG', zranges=None, version='v4.80', weigh
 
 if __name__ == '__main__':
 
-    todo = ['test']
+    #todo = ['test']
     #todo = ['density']
     #todo = ['randoms']
-    #todo = ['large_scales']
+    todo = ['large_scales']
     weight = 'default'
     stats = ['mesh2_spectrum', 'mesh3_spectrum_sugiyama', 'mesh3_spectrum_scoccimarro', 'window_mesh2_spectrum'][:1]
 
@@ -234,6 +234,7 @@ if __name__ == '__main__':
 
         for tracer in tracers:
             imocks = list_existing_imocks(100, version=version, tracers=[tracer])
+            imocks = [imock for imock in imocks if imock > 106]
             if any('window' in stat for stat in stats):
                 imocks = [1]
             run_stats(tracer, version=version, weight=weight, stats=stats, stats_dir=stats_dir, get_catalog_fn=get_holi_catalog_fn, imocks=imocks)

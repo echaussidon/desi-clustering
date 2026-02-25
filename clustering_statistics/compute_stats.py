@@ -521,12 +521,12 @@ def main(**kwargs):
     parser.add_argument('--expand_randoms', help='expand catalog of randoms; provide version of parent randoms (must be registered in get_catalog_fn)', type=str, choices=['data-dr2-v2'], default=None)
     parser.add_argument('--stats_dir',  help='base directory for measurements, default is SCRATCH', type=str, default=Path(os.getenv('SCRATCH')) / 'measurements')
     parser.add_argument('--stats_extra',  help='extra string to include in measurement filename', type=str, default='')
-    parser.add_argument('--combine', help='combine measurements in two regions', action='store_true')
+    parser.add_argument('--combine', help='combine measurements in two regions', type=str, nargs='*', default=None, choices=['mesh2_spectrum', 'mesh3_spectrum', 'recon_particle2_correlation', 'window_mesh2_spectrum', 'window_mesh3_spectrum'])
 
     args = parser.parse_args()
+    os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.9'
+    import jax
     if args.stats:
-        os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.9'
-        import jax
         jax.distributed.initialize()
 
     setup_logging()
@@ -543,22 +543,31 @@ def main(**kwargs):
     get_catalog_fn = tools.get_catalog_fn
     get_stats_fn = functools.partial(tools.get_stats_fn, stats_dir=args.stats_dir, extra=args.stats_extra)
     cache = {}
-    for imock in args.imock:
-        catalog_options = dict(version=args.version, cat_dir=args.cat_dir, tracer=args.tracer, zrange=zranges,
-                               weight=args.weight, nran=args.nran, imock=imock, ext=None)
-        options_imock = _merge_options(fill_fiducial_options(dict(catalog=catalog_options) | options, analysis=args.analysis), kwargs)
 
-        for region in args.region:
-            _options_imock = dict(options_imock)
-            for tracer in _options_imock['catalog']:
-                _options_imock['catalog'][tracer] = _options_imock['catalog'][tracer] | dict(region=region)
-                if args.expand_randoms:
-                    _options_imock['catalog'][tracer]['expand'] = {'parent_randoms_fn': get_catalog_fn(kind='parent_randoms', version=args.expand_randoms, tracer=tracer, region=region, nran=max(value['nran'] for value in _options_imock['recon'].values()))}
-            compute_stats_from_options(args.stats, get_catalog_fn=get_catalog_fn, get_stats_fn=get_stats_fn, cache=cache, **_options_imock)
-            jax.experimental.multihost_utils.sync_global_devices('measurements')
-        if args.combine and jax.process_index() == 0:
-            for region_comb, regions in tools.possible_combine_regions(args.region).items():
-                combine_stats_from_options(args.stats, region_comb, regions, get_stats_fn=get_stats_fn, **_options_imock)
+    def _keep_if_not_none(**kwargs):
+        return {k: v for k, v in kwargs.items() if v is not None}
+
+    catalog_options = dict(tracer=args.tracer, zrange=zranges, ext=None)
+    catalog_options |= _keep_if_not_none(weight=args.weight, version=args.version, cat_dir=args.cat_dir, nran=args.nran)
+    options = _merge_options(fill_fiducial_options(dict(catalog=catalog_options) | options, analysis=args.analysis), kwargs)
+
+    if args.stats:
+        for imock in args.imock:
+            for region in args.region:
+                _options_imock = dict(options)
+                for tracer in _options_imock['catalog']:
+                    _options_imock['catalog'][tracer] = _options_imock['catalog'][tracer] | dict(region=region, imock=imock)
+                    if args.expand_randoms:
+                        _options_imock['catalog'][tracer]['expand'] = {'parent_randoms_fn': get_catalog_fn(kind='parent_randoms', version=args.expand_randoms, tracer=tracer, region=region, nran=max(value['nran'] for value in _options_imock['recon'].values()))}
+                compute_stats_from_options(args.stats, get_catalog_fn=get_catalog_fn, get_stats_fn=get_stats_fn, cache=cache, **_options_imock)
+                jax.experimental.multihost_utils.sync_global_devices(region)
+
+    if args.combine is not None and jax.process_index() == 0:
+        stats = []
+        if args.combine: stats = args.combine
+        elif args.stats: stats = args.stats
+        else: stats = ['mesh2_spectrum', 'mesh3_spectrum']  # best guess, if not argument was provided
+        postprocess_stats_from_options(['combine_regions'], get_stats_fn=get_stats_fn, combine_regions=dict(stats=stats), **options, imocks=args.imock)
     if args.stats:
         jax.distributed.shutdown()
 

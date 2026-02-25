@@ -1408,9 +1408,6 @@ def write_stats(filename, stats):
     tmp_filename = filename.with_name(filename.stem + '.tmp' + filename.suffix)
     if jax.process_index() == 0:
         stats.write(tmp_filename)
-    import jax.experimental.multihost_utils
-    jax.experimental.multihost_utils.sync_global_devices(str(filename))
-    if jax.process_index() == 0:
         logger.info(f'Writing {filename}')
         os.replace(tmp_filename, filename)
 
