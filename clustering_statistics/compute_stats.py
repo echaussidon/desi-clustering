@@ -101,7 +101,7 @@ def compute_stats_from_options(stats, analysis='full_shape', cache=None,
         for tracer in tracers:
             _catalog_options = dict(catalog_options[tracer])
             _catalog_options['zrange'] = (min(zrange[0] for zrange in zranges[tracer]), max(zrange[1] for zrange in zranges[tracer]))
-            if any(name in catalog_options.get('weight', '') for name in ['bitwise', 'compntile']):
+            if any(name in _catalog_options.get('weight', '') for name in ['bitwise', 'compntile']):
                 # sets NTILE-MISSING-POWER (missing_power) and per-tile completeness (completeness)
                 _catalog_options['binned_weight'] = read_full_catalog(kind='parent_data', **_catalog_options, attrs_only=True)
 

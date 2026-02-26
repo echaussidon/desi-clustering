@@ -68,9 +68,6 @@ def prepare_jaxpower_particles(*get_data_randoms, mattrs=None, add_data=tuple(),
             elif name == 'randoms':
                 if 'TARGETID' in catalog and 'IDS' in add[name]:
                     _add['IDS'] = catalog['TARGETID']
-            for column in add[name]:
-                if column != 'BITWEIGHT' and column != 'IDS':
-                    _add[column] = catalog[column]
                 for column in add[name]:
                     if column != 'IDS': _add[column] = catalog[column]
             particle = ParticleField(catalog['POSITION'], indweights, attrs=mattrs, exchange=True, backend=backend, **kwargs)
@@ -78,7 +75,7 @@ def prepare_jaxpower_particles(*get_data_randoms, mattrs=None, add_data=tuple(),
                 if isinstance(value, list): value = [particle.exchange_direct(value, pad=0) for value in value]
                 else: value = particle.exchange_direct(value, pad=0)
                 particle.__dict__[key] = value
-            particles['data'] = particle
+            particles[name] = particle
         all_particles.append(particles)
     if jax.process_index() == 0:
         logger.info(f'All particles on the device')
@@ -88,7 +85,7 @@ def prepare_jaxpower_particles(*get_data_randoms, mattrs=None, add_data=tuple(),
 
 def _get_jaxpower_attrs(*all_particles):
     """Return summary attributes from :class:`jaxpower.ParticleField` objects: total weight and size."""
-    mattrs = next(iter(all_particles[0])).attrs
+    mattrs = next(iter(all_particles[0].values())).attrs
     # Creating FKP fields
     attrs = {}
     for particles in all_particles:
@@ -97,7 +94,7 @@ def _get_jaxpower_attrs(*all_particles):
                 if f'wsum_{name}' not in attrs:
                     #attrs[f'size_{name}'] = [[]]  # size is process-dependent
                     attrs[f'wsum_{name}'] = [[]]
-               # attrs[f'size_{name}'][0].append(dparticle[name].size)
+               # attrs[f'size_{name}'][0].append(particles[name].size)
                 attrs[f'wsum_{name}'][0].append(particles[name].sum())
     for name in ['boxsize', 'boxcenter', 'meshsize']:
         attrs[name] = mattrs[name]
@@ -642,7 +639,7 @@ def compute_rotation_mesh2_spectrum(window: types.WindowMatrix, covariance: type
 
 
 def compute_box_mesh2_spectrum(*get_data, ells=(0, 2, 4), los='z', cache=None, mattrs=None):
-    """
+    r"""
     Compute the 2-point spectrum multipoles for a cubic box using :mod:`jaxpower`.
 
     Parameters
@@ -737,10 +734,10 @@ def compute_window_box_mesh2_spectrum(spectrum: types.Mesh2SpectrumPoles, zsnap:
     los = spectrum.attrs['los']
     ells = spectrum.ells
     pole = spectrum.get(0)
-    bin = BinMesh2SpectrumPoles(mattrs, edges=pole.edges('k'), ells=ells)
-    #edgesin = np.linspace(bin.edges.min(), bin.edges.max(), 2 * (len(bin.edges) - 1))
-    edgesin = bin.edges
     with create_sharding_mesh(meshsize=mattrs.get('meshsize', None)):
+        bin = BinMesh2SpectrumPoles(mattrs, edges=pole.edges('k'), ells=ells)
+        #edgesin = np.linspace(bin.edges.min(), bin.edges.max(), 2 * (len(bin.edges) - 1))
+        edgesin = bin.edges
         window = compute_mesh2_spectrum_window(mattrs, edgesin=edgesin, ellsin=ells, los=los, bin=bin)
         observable = window.observable
         if zsnap is not None:
@@ -766,14 +763,15 @@ def compute_covariance_box_mesh2_spectrum(theory: types.Mesh2SpectrumPoles=None,
     covarance : CovarianceMatrix
         The computed 2-point spectrum covariance.
     """
-    from jaxpower import MeshAttrs, compute_spectrum2_covariance
-    mattrs = MeshAttrs(**mattrs)
+    from jaxpower import create_sharding_mesh, MeshAttrs, compute_spectrum2_covariance
     # Add shotnoise to theory
     theory_sn = theory.map(lambda pole: pole.clone(num_shotnoise=pole.values('num_shotnoise') * 0.), level=2)
-    covariance = compute_spectrum2_covariance(mattrs, theory_sn)  # Gaussian, diagonal covariance
-
-    # Update label names
-    fields = covariance.observable.fields
-    observable = types.ObservableTree(list(covariance.observable), observables=['spectrum2'] * len(fields), tracers=fields)
-    covariance = covariance.clone(observable=observable)
+    with create_sharding_mesh(meshsize=mattrs.get('meshsize', None)):
+        mattrs = MeshAttrs(**mattrs)
+        covariance = compute_spectrum2_covariance(mattrs, theory_sn)  # Gaussian, diagonal covariance
+    
+        # Update label names
+        fields = covariance.observable.fields
+        observable = types.ObservableTree(list(covariance.observable), observables=['spectrum2'] * len(fields), tracers=fields)
+        covariance = covariance.clone(observable=observable)
     return covariance

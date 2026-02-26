@@ -50,13 +50,13 @@ def run_stats(tracer='LRG', version='abacus-2ndgen', imocks=[0], stats_dir=Path(
 
     cache = {}
     zsnaps = box_tools.propose_box_fiducial('zsnaps', tracer, version=version)
-    get_stats_fn = functools.partial(box_tools.get_box_stats_fn, stats_dir=stats_dir)
+    get_box_stats_fn = functools.partial(box_tools.get_box_stats_fn, stats_dir=stats_dir)
     for imock in imocks:
         for zsnap in zsnaps:
             for los in 'xyz':
                 options = dict(catalog=dict(version=version, tracer=tracer, zsnap=zsnap, los=los, imock=imock))
                 options = fill_box_fiducial_options(options)
-                compute_box_stats_from_options(stats, get_stats_fn=get_stats_fn, cache=cache, **options)
+                compute_box_stats_from_options(stats, get_box_stats_fn=get_box_stats_fn, cache=cache, **options)
 
 
 if __name__ == '__main__':
@@ -73,9 +73,9 @@ if __name__ == '__main__':
     stats_dir = Path('/global/cfs/cdirs/desi/mocks/cai/LSS/DA2/mocks/desipipe/box/')
     version = 'abacus-2ndgen'
 
-    for tracer in ['BGS_BRIGHT-21.35', 'LRG', 'ELG', 'QSO'][1:]:
+    for tracer in ['BGS_BRIGHT-21.35', 'LRG', 'ELG', 'QSO'][1:2]:
 
-        _run_stats = tm.python_app(run_stats)
+        _run_stats = run_stats if mode == 'interactive' else tm.python_app(run_stats)
 
         if any('window' in stat or 'covariance' in stat for stat in stats):
             _imocks = [0]

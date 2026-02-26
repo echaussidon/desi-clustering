@@ -22,9 +22,9 @@ logger = logging.getLogger('summary-statistics')
 
 
 def compute_box_stats_from_options(stats, cache=None,
-                                    get_stats_fn=box_tools.get_box_stats_fn,
-                                    get_catalog_fn=None,
-                                    read_clustering_catalog=box_tools.read_clustering_catalog,
+                                    get_box_stats_fn=box_tools.get_box_stats_fn,
+                                    get_box_catalog_fn=None,
+                                    read_clustering_box_catalog=box_tools.read_clustering_box_catalog,
                                     **kwargs):
     """
     Compute summary statistics based on the provided options.
@@ -34,21 +34,17 @@ def compute_box_stats_from_options(stats, cache=None,
     stats : str or list of str
         Summary statistics to compute.
         Choices: ['mesh2_spectrum', 'mesh3_spectrum', 'recon_mesh2_spectrum', 'window_mesh2_spectrum', 'covariance_mesh2_spectrum']
-    analysis : str, optional
-        Type of analysis, 'full_shape' or 'png_local', to set fiducial options.
     cache : dict, optional
         Cache to store intermediate results (binning class and parent/reference random catalog).
         See :func:`spectrum2_tools.compute_mesh2_spectrum`, :func:`spectrum3_tools.compute_mesh3_spectrum`,
-        and func:`tools.read_clustering_catalog` for details.
-    get_stats_fn : callable, optional
+        and func:`tools.read_clustering_box_catalog` for details.
+    get_box_stats_fn : callable, optional
         Function to get the filename for storing the measurement.
-    get_catalog_fn : callable, optional
+    get_box_catalog_fn : callable, optional
         Function to get the filename for reading the catalog.
-        If provided, it is given to ``read_clustering_catalog`` and ``read_full_catalog``.
-    read_clustering_catalog : callable, optional
+        If provided, it is given to ``read_clustering_box_catalog`` and ``read_full_catalog``.
+    read_clustering_box_catalog : callable, optional
         Function to read the clustering catalog.
-    read_full_catalog : callable, optional
-        Function to read the full catalog.
     **kwargs : dict
         Options for catalog, reconstruction, and summary statistics.
     """
@@ -60,8 +56,8 @@ def compute_box_stats_from_options(stats, cache=None,
     catalog_options = options['catalog']
     tracers = list(catalog_options.keys())
 
-    if get_catalog_fn is not None:
-        read_clustering_catalog = functools.partial(read_clustering_catalog, get_catalog_fn=get_catalog_fn)
+    if get_box_catalog_fn is not None:
+        read_clustering_box_catalog = functools.partial(read_clustering_box_catalog, get_box_catalog_fn=get_box_catalog_fn)
 
     with_recon = any('recon' in stat for stat in stats)
     with_catalogs = True
@@ -70,7 +66,7 @@ def compute_box_stats_from_options(stats, cache=None,
     if with_catalogs:
         for tracer in tracers:
             _catalog_options = dict(catalog_options[tracer])
-            data[tracer] = read_clustering_catalog(kind='data', **_catalog_options, concatenate=True)
+            data[tracer] = read_clustering_box_catalog(kind='data', **_catalog_options, concatenate=True)
             zsnap = data[tracer].attrs['zsnap']
             cmattrs = dict(boxsize=data[tracer].attrs['boxsize'], boxcenter=data[tracer].attrs['boxcenter'])
 
@@ -103,7 +99,7 @@ def compute_box_stats_from_options(stats, cache=None,
                 return {'data': data[tracer]}
 
             correlation = compute_box_particle2_correlation(*[functools.partial(get_data, tracer) for tracer in tracers], **correlation_options)
-            fn = get_stats_fn(kind=stat, catalog=fn_catalog_options, **correlation_options)
+            fn = get_box_stats_fn(kind=stat, catalog=fn_catalog_options, **correlation_options)
             box_tools.write_stats(fn, correlation)
 
         funcs = {f'{recon}mesh2_spectrum': compute_box_mesh2_spectrum, f'{recon}mesh3_spectrum': compute_box_mesh3_spectrum}
@@ -120,7 +116,7 @@ def compute_box_stats_from_options(stats, cache=None,
                     return {'data': data[tracer]}
 
                 spectrum = func(*[functools.partial(get_data, tracer) for tracer in tracers], cache=cache, **spectrum_options)
-                fn = get_stats_fn(kind=stat, catalog=fn_catalog_options, **kw)
+                fn = get_box_stats_fn(kind=stat, catalog=fn_catalog_options, **kw)
                 box_tools.write_stats(fn, spectrum)
 
     jax.experimental.multihost_utils.sync_global_devices('spectrum')  # such that spectrum ready for window
@@ -135,11 +131,11 @@ def compute_box_stats_from_options(stats, cache=None,
             spectrum_fn = window_options.pop('spectrum', None)
             if spectrum_fn is None:
                 spectrum_stat = stat.replace('window_', '')
-                spectrum_fn = get_stats_fn(kind=spectrum_stat, catalog=fn_catalog_options, **options[spectrum_stat])
+                spectrum_fn = get_box_stats_fn(kind=spectrum_stat, catalog=fn_catalog_options, **options[spectrum_stat])
             spectrum = types.read(spectrum_fn)
 
             window = func(spectrum=spectrum, **window_options)
-            fn = get_stats_fn(kind=stat, catalog=fn_catalog_options, **kw)
+            fn = get_box_stats_fn(kind=stat, catalog=fn_catalog_options, **kw)
             box_tools.write_stats(fn, window)
 
     # Covariance matrix
@@ -170,9 +166,9 @@ def compute_box_stats_from_options(stats, cache=None,
                     fn = covariance_options.pop(name, None)
                     if fn is None:
                         kw = options[kind_stat] | dict(auw=False, cut=False)
-                        fn = {(tracer, tracer): get_stats_fn(kind=kind_stat, catalog=fn_catalog_options[tracer], **kw) for tracer in tracers}
+                        fn = {(tracer, tracer): get_box_stats_fn(kind=kind_stat, catalog=fn_catalog_options[tracer], **kw) for tracer in tracers}
                         if len(tracers) > 1:
-                            fn[tuple(tracers)] = get_stats_fn(kind=kind_stat, catalog=fn_catalog_options, **kw)
+                            fn[tuple(tracers)] = get_box_stats_fn(kind=kind_stat, catalog=fn_catalog_options, **kw)
                     elif not isinstance(fn, dict):
                         _check_fn(fn, tracers, name=name)
                     products_fn[name] = fn
@@ -182,7 +178,7 @@ def compute_box_stats_from_options(stats, cache=None,
                     spectrum = _read_tracer(products_fn['spectrum'], tracers2)
                     window = _read_tracer(products_fn['window'], tracers2)
                     theory = run_preliminary_fit_mesh2_spectrum(data=spectrum, window=window)
-                    theory_fn[tracers2] = get_stats_fn(kind=theory_stat, catalog=(fn_catalog_options[tracers2[0]] if tracers2[1] == tracers2[0] else {tracer: fn_catalog_options[tracer] for tracer in tracers2}))
+                    theory_fn[tracers2] = get_box_stats_fn(kind=theory_stat, catalog=(fn_catalog_options[tracers2[0]] if tracers2[1] == tracers2[0] else {tracer: fn_catalog_options[tracer] for tracer in tracers2}))
                     box_tools.write_stats(theory_fn[tracers2], theory)
             else:
                 _check_fn(theory_fn, tracers, name='theory')
@@ -192,11 +188,11 @@ def compute_box_stats_from_options(stats, cache=None,
             theory = {tuple(fields[tracer] for tracer in tracers2): _read_tracer(theory_fn, tracers2) for tracers2 in itertools.product(tracers, repeat=2)}
             theory = types.ObservableTree(list(theory.values()), fields=list(theory.keys()))
             covariance = func(spectrum=spectrum, theory=theory, **covariance_options)
-            fn = get_stats_fn(kind=stat, catalog=fn_catalog_options, **kw)
+            fn = get_box_stats_fn(kind=stat, catalog=fn_catalog_options, **kw)
             box_tools.write_stats(fn, covariance)
 
 
-def list_stats(stats, get_stats_fn=box_tools.get_box_stats_fn, **kwargs):
+def list_stats(stats, get_box_stats_fn=box_tools.get_box_stats_fn, **kwargs):
     """
     List measurements produced by :func:`compute_stats_from_options`.
 
@@ -204,7 +200,7 @@ def list_stats(stats, get_stats_fn=box_tools.get_box_stats_fn, **kwargs):
     ----------
     stats : str or list of str
         Summary statistics to list.
-    get_stats_fn : callable, optional
+    get_box_stats_fn : callable, optional
         Function to get the filename for storing the measurement.
     **kwargs : dict
         Options for catalog and summary statistics. For example:
@@ -220,6 +216,6 @@ def list_stats(stats, get_stats_fn=box_tools.get_box_stats_fn, **kwargs):
     toret = {stat: [] for stat in stats}
     for stat in stats:
         kw = dict(catalog=catalog_options, **kwargs[stat])
-        fn = get_stats_fn(kind=stat, **kw)
+        fn = get_box_stats_fn(kind=stat, **kw)
         toret[stat].append((fn, kw))
     return toret

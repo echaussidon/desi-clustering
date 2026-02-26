@@ -5,7 +5,7 @@ import numpy as np
 from mpi4py import MPI
 
 from .tools import (default_mpicomm, Catalog, join_tracers, _unzip_catalog_options, _merge_catalog_options, _zip_catalog_options,
-_read_catalog, get_simple_tracer, _merge_options, _make_tuple, desi_dir, write_stats)
+_read_catalog, get_simple_tracer, _merge_options, _make_tuple, desi_dir, write_stats, setup_logging)
 
 
 def get_zrange_from_snap(tracer, zsnap=None, version='abacus-2ndgen'):
@@ -262,6 +262,8 @@ def read_clustering_box_catalog(kind='data', los='z', mpicomm=None, get_box_cata
     if mpicomm.rank == mpiroot:
         fn = get_box_catalog_fn(kind=kind, los=los, **kwargs)
         catalog = read_catalog(fn)
+        boxsize = catalog.header.get('BOXSIZE', 2000.)
+        scalev = catalog.header.get('VELZ2KMS', None)
 
     boxsize, scalev = mpicomm.bcast((boxsize, scalev), root=mpiroot)
 

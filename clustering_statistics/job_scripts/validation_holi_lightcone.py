@@ -53,15 +53,12 @@ def run_stats(tracer='LRG', zranges=None, version='holi-v4.80', weight='default-
         for imock in imocks:
             regions = ['NGC', 'SGC'][:1]
             for region in regions:
-                options = dict(catalog=dict(version=version, tracer=tracer, zrange=zranges, region=region, weight=weight, imock=imock, nran=18), mesh2_spectrum={}, **kw)
+                options = dict(catalog=dict(version=version, tracer=tracer, zrange=zranges, region=region, weight=weight, imock=imock), mesh2_spectrum={}, **kw)
                 options = fill_fiducial_options(options, analysis='full_shape_protected' if 'data' in version else 'full_shape')
                 if 'uchuu-hf-complete' in version:
                     for tracer in options['catalog']:
                         options['catalog'][tracer]['nran'] = min(options['catalog'][tracer]['nran'], 4)
                 compute_stats_from_options(stat, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), get_catalog_fn=get_catalog_fn, cache=cache, **options)
-            jax.experimental.multihost_utils.sync_global_devices('measurements')
-            for region_comb, regions in tools.possible_combine_regions(regions).items():
-                combine_stats_from_options(stat, region_comb, regions, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), **options)
     #jax.distributed.shutdown()
 
 
@@ -148,7 +145,7 @@ def fit_large_scales(imock=0, tracer='LRG', zranges=None, version='v4.80', weigh
                 bin = BinMesh2SpectrumPoles(mattrs, edges={'step': 0.001}, ells=spectrum.ells)
                 data = tools.read_clustering_catalog(kind='data', **kw_catalog, get_catalog_fn=get_catalog_fn)
                 randoms = tools.read_clustering_catalog(kind='randoms', **kw_catalog, get_catalog_fn=get_catalog_fn)
-                _, randoms, _ = prepare_jaxpower_particles(lambda: (data, randoms), mattrs=mattrs)[0]
+                randoms = prepare_jaxpower_particles(lambda: {'randoms': randoms}, mattrs=mattrs)[0]['randoms']
                 pole = next(iter(spectrum))
                 kw_paint = dict(resampler='tsc', interlacing=3, compensate=True)
                 meshes = []
@@ -181,7 +178,7 @@ if __name__ == '__main__':
     #todo = ['randoms']
     todo = ['large_scales']
     weight = 'default'
-    stats = ['mesh2_spectrum', 'mesh3_spectrum_sugiyama', 'mesh3_spectrum_scoccimarro', 'window_mesh2_spectrum'][:1]
+    stats = ['mesh2_spectrum', 'mesh3_spectrum_sugiyama', 'mesh3_spectrum_scoccimarro', 'window_mesh2_spectrum'][-1:]
 
     if 'ref' in todo:
         imocks = list(range(5))
@@ -225,12 +222,13 @@ if __name__ == '__main__':
     if 'randoms' in todo:
         for tracer in ['LRG', 'ELG', 'QSO'][:1]:
             version = 'v4.80'
+            imocks = list_existing_imocks(100, version=version, tracers=[tracer])
             make_merged_random_catalog(imocks=imocks, tracer=tracer, version=version, stats_dir=stats_dir, nran=18, get_catalog_fn=get_holi_catalog_fn)
 
     if 'test' in todo:
         #version = 'v4.00'
         version = 'v4.80'
-        tracers = ['LRG', 'ELG', 'QSO'][:1]
+        tracers = ['LRG', 'ELG', 'QSO'][2:]
 
         for tracer in tracers:
             imocks = list_existing_imocks(100, version=version, tracers=[tracer])
@@ -242,15 +240,14 @@ if __name__ == '__main__':
     if 'density' in todo:
         version = 'v4.80'
         #version = 'v4.00'
-        tracers = ['LRG', 'ELG', 'QSO'][:1]
-
-        imocks = list_existing_imocks(11, tracers=tracers)
+        tracers = ['LRG', 'ELG', 'QSO'][2:]
         for tracer in tracers:
+            imocks = list_existing_imocks(100, version=version, tracers=[tracer])
             plot_density(imock=imocks, tracer=tracer, version=version, weight='default', get_catalog_fn=get_holi_catalog_fn)
 
     if 'large_scales' in todo:
         version = 'v4.80'
         #version = 'v4.00'
-        tracers = ['LRG', 'ELG', 'QSO'][:1]
+        tracers = ['LRG', 'ELG', 'QSO'][2:]
         for tracer in tracers:
             fit_large_scales(imock=1, tracer=tracer, version=version, weight='default', stats_dir=stats_dir, plots_dir=plots_dir, get_catalog_fn=get_holi_catalog_fn)
