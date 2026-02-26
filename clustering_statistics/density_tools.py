@@ -238,7 +238,7 @@ def plot_density_projections(get_catalog_fn=tools.get_catalog_fn, read_catalog=t
                 _annotate_chi2(ax, chi2, mask.sum() - 1, loc="upper left")
             else:
                 ax.plot(x, mean, color='k')
-                ax.fill_between(x, mean - std, mean + std, color='k', alpha=0.2)
+                ax.fill_between(x, mean - err, mean + err, color='k', alpha=0.2)
                 if iname == 0:
                     ax.set_ylabel('counts')
 
