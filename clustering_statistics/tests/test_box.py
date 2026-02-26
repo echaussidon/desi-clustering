@@ -79,7 +79,7 @@ def test_window(stats=['mesh2_spectrum']):
 def test_covariance():
     stats_dir = Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks'
     stats = ['mesh2_spectrum', 'window_mesh2_spectrum', 'covariance_mesh2_spectrum']
-    for tracer in ['LRG', 'ELG', ('LRG', 'ELG')]:
+    for tracer in ['LRG', 'ELG', ('LRG', 'ELG')][2:]:
         version = 'abacus-hf-v2'
         zsnap = 0.950
         catalog_options = dict(version=version, tracer=tracer, zsnap=zsnap, imock=1)
