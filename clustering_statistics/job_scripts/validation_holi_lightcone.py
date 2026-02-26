@@ -18,7 +18,7 @@ from clustering_statistics import tools
 
 setup_logging()
 
-stats_dir = Path(os.getenv('CFS')) / 'cai' / 'holi_lightcone_validation'
+stats_dir = Path(os.getenv('CFS')) / 'cai' / 'holi_lightcone_validation2'
 plots_dir = Path('./_plots')
 
 
@@ -53,11 +53,17 @@ def run_stats(tracer='LRG', zranges=None, version='holi-v4.80', weight='default-
         for imock in imocks:
             regions = ['NGC', 'SGC'][:1]
             for region in regions:
-                options = dict(catalog=dict(version=version, tracer=tracer, zrange=zranges, region=region, weight=weight, imock=imock), mesh2_spectrum={}, **kw)
+                options = dict(catalog=dict(version=version, tracer=tracer, zrange=zranges, region=region, weight=weight, imock=imock), mesh2_spectrum={'mattrs': {'boxsize': 10000., 'meshsize': 750}}, **kw)
                 options = fill_fiducial_options(options, analysis='full_shape_protected' if 'data' in version else 'full_shape')
                 if 'uchuu-hf-complete' in version:
                     for tracer in options['catalog']:
                         options['catalog'][tracer]['nran'] = min(options['catalog'][tracer]['nran'], 4)
+
+                def read_clustering_catalog(**kwargs):
+                    catalog = tools.read_clustering_catalog(**kwargs)
+                    mask = (catalog['Z'] > 0.85) & (catalog['Z'] < 0.95)
+                    return catalog[~mask]
+
                 compute_stats_from_options(stat, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), get_catalog_fn=get_catalog_fn, cache=cache, **options)
     #jax.distributed.shutdown()
 
@@ -228,14 +234,14 @@ if __name__ == '__main__':
     if 'test' in todo:
         #version = 'v4.00'
         version = 'v4.80'
-        tracers = ['LRG', 'ELG', 'QSO'][2:]
+        tracers = ['LRG', 'ELG', 'QSO'][:1]
 
         for tracer in tracers:
-            imocks = list_existing_imocks(100, version=version, tracers=[tracer])
-            imocks = [imock for imock in imocks if imock > 106]
+            imocks = list_existing_imocks(25, version=version, tracers=[tracer])
+            zranges = [(0.8, 1.1)]
             if any('window' in stat for stat in stats):
                 imocks = [1]
-            run_stats(tracer, version=version, weight=weight, stats=stats, stats_dir=stats_dir, get_catalog_fn=get_holi_catalog_fn, imocks=imocks)
+            run_stats(tracer, version=version, weight=weight, stats=stats, stats_dir=stats_dir, get_catalog_fn=get_holi_catalog_fn, zranges=zranges, imocks=imocks)
 
     if 'density' in todo:
         version = 'v4.80'
@@ -248,6 +254,7 @@ if __name__ == '__main__':
     if 'large_scales' in todo:
         version = 'v4.80'
         #version = 'v4.00'
-        tracers = ['LRG', 'ELG', 'QSO'][2:]
+        tracers = ['LRG', 'ELG', 'QSO'][:1]
         for tracer in tracers:
-            fit_large_scales(imock=1, tracer=tracer, version=version, weight='default', stats_dir=stats_dir, plots_dir=plots_dir, get_catalog_fn=get_holi_catalog_fn)
+            zranges = [(0.8, 1.1)]
+            fit_large_scales(imock=1, tracer=tracer, zranges=zranges, version=version, weight='default', stats_dir=stats_dir, plots_dir=plots_dir, get_catalog_fn=get_holi_catalog_fn)

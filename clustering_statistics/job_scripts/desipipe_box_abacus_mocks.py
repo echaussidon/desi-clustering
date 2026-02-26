@@ -64,8 +64,8 @@ if __name__ == '__main__':
     mode = 'interactive'
     #mode = 'slurm'
     stats, postprocess = [], []
-    stats = ['mesh2_spectrum'] # 'mesh3_spectrum']
-    #stats = ['window_mesh2_spectrum']
+    #stats = ['mesh2_spectrum'] # 'mesh3_spectrum']
+    stats = ['window_mesh2_spectrum']
     #stats = ['window_mesh3_spectrum']
     #postprocess = ['combine_regions']
     imocks = np.arange(25)
@@ -73,7 +73,7 @@ if __name__ == '__main__':
     stats_dir = Path('/global/cfs/cdirs/desi/mocks/cai/LSS/DA2/mocks/desipipe/box/')
     version = 'abacus-2ndgen'
 
-    for tracer in ['BGS_BRIGHT-21.35', 'LRG', 'ELG', 'QSO'][1:2]:
+    for tracer in ['BGS_BRIGHT-21.35', 'LRG', 'ELG', 'QSO'][1:]:
 
         _run_stats = run_stats if mode == 'interactive' else tm.python_app(run_stats)
 

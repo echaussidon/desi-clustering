@@ -143,20 +143,21 @@ def fill_box_fiducial_options(kwargs):
     options['catalog'] = _unzip_catalog_options(options['catalog'])
     tracers = tuple(options['catalog'].keys())
     for tracer in tracers:
-        fiducial_options = propose_box_fiducial('catalog', tracer=tracer)
+        version = options['catalog'][tracer].get('version', '')
+        fiducial_options = propose_box_fiducial('catalog', tracer=tracer, version=version)
         options['catalog'][tracer] = fiducial_options | options['catalog'][tracer]
     los_options = dict(los=options['catalog'][tracers[0]]['los'])
     recon_options = options.pop('recon', {})
     # recon for each tracer
     options['recon'] = {}
     for tracer in tracers:
-        fiducial_options = propose_box_fiducial('recon', tracer=tracer)
+        fiducial_options = propose_box_fiducial('recon', tracer=tracer, version=version)
         options['recon'][tracer] = fiducial_options | los_options | recon_options.get(tracer, recon_options)
         if mattrs: options['recon'][tracer]['mattrs'] = mattrs
     for recon in ['', 'recon_']:
         for stat in ['particle2_correlation', 'mesh2_spectrum', 'mesh3_spectrum']:
             stat = f'{recon}{stat}'
-            fiducial_options = propose_box_fiducial(stat, tracer=tracers)
+            fiducial_options = propose_box_fiducial(stat, tracer=tracers, version=version)
             options[stat] = fiducial_options | los_options | options.get(stat, {})
             if 'mesh' in stat:
                 if mattrs: options[stat]['mattrs'] = mattrs
