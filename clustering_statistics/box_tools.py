@@ -113,7 +113,17 @@ def propose_box_fiducial(kind, tracer, version='abacus-hf-v2'):
     tracer = join_tracers(tracers)
     tracer = get_simple_tracer(tracer)
     propose_fiducial = base | propose_fiducial[tracer]
-    propose_fiducial['catalog'] = {'los': 'z'}
+    propose_fiducial['recon']['nran'] = 10
+    propose_fiducial['catalog'] = {'hod': '', 'los': 'z'}
+    if 'abacus' in version:
+        propose_fiducial['catalog'].update({'cosmo': '000'})
+    if 'abacus-hf' in version:
+        hod = 'base'
+        if 'BGS' in tracer or 'LRG' in tracer:
+            hod = 'base_B'
+        elif 'ELG' in tracer:
+            hod = 'base_conf_nfwexp'
+        propose_fiducial['catalog'].update({'hod': hod})
     propose_fiducial['zsnaps'] = list(get_zrange_from_snap(tracer, zsnap=None, version=version))
     for stat in ['mesh2_spectrum', 'mesh3_spectrum']:
         propose_fiducial[stat]['mattrs'] = {'meshsize': 512}
@@ -135,7 +145,7 @@ def fill_box_fiducial_options(kwargs):
     for tracer in tracers:
         fiducial_options = propose_box_fiducial('catalog', tracer=tracer)
         options['catalog'][tracer] = fiducial_options | options['catalog'][tracer]
-    los_options = dict(z=options['catalog'][tracers[0]]['los'])
+    los_options = dict(los=options['catalog'][tracers[0]]['los'])
     recon_options = options.pop('recon', {})
     # recon for each tracer
     options['recon'] = {}
@@ -265,6 +275,11 @@ def read_clustering_box_catalog(kind='data', los='z', mpicomm=None, get_box_cata
         boxsize = catalog.header.get('BOXSIZE', 2000.)
         scalev = catalog.header.get('VELZ2KMS', None)
 
+    if mpicomm.size > 1:
+        catalog = Catalog.scatter(catalog, mpicomm=mpicomm, mpiroot=mpiroot)
+    for name in catalog.columns():
+        catalog[name.upper()] = catalog.pop(name)
+
     boxsize, scalev = mpicomm.bcast((boxsize, scalev), root=mpiroot)
 
     if scalev is None:
@@ -273,12 +288,6 @@ def read_clustering_box_catalog(kind='data', los='z', mpicomm=None, get_box_cata
         a = 1.0 / (1.0 + zsnap)
         E = cosmo.efunc(zsnap)
         scalev = 100.0 * a * E
-
-    if mpicomm.size > 1:
-        catalog = Catalog.scatter(catalog, mpicomm=mpicomm, mpiroot=mpiroot)
-
-    for name in catalog.columns():
-        catalog[name.upper()] = catalog[name]
 
     positions = np.column_stack([catalog[name] for name in ['X', 'Y', 'Z']])
     positions = recenter(positions, boxsize)
@@ -292,10 +301,12 @@ def read_clustering_box_catalog(kind='data', los='z', mpicomm=None, get_box_cata
         vlos["xyz".index(los)] = 1.0
     vlos = np.array(vlos)
 
-    positions = positions + (np.sum(velocities * vlos, axis=-1)[..., None] + vsmear) * vlos[None, :]
+    positions = positions + (np.sum(velocities * vlos, axis=-1) + vsmear)[..., None] * vlos[None, :]
     positions = (positions + boxsize / 2.0) % boxsize - boxsize / 2.0
     attrs = {'boxsize': boxsize * np.ones(3), 'boxcenter': np.zeros(3), 'zsnap': zsnap, 'los': los}
-    return Catalog({'POSITION': positions, 'INDWEIGHT': np.ones_like(positions[..., 0])}, attrs=attrs, mpicomm=mpicomm)
+    catalog = Catalog({'POSITION': positions, 'INDWEIGHT': np.ones_like(positions[..., 0])},
+                      attrs=attrs, mpicomm=mpicomm)
+    return catalog
 
 
 def get_box_stats_fn(stats_dir=Path(os.getenv('SCRATCH', '.')) / 'measurements',
@@ -314,7 +325,7 @@ def get_box_stats_fn(stats_dir=Path(os.getenv('SCRATCH', '.')) / 'measurements',
     tracer : str
         Tracer name.
     cosmo : str
-        Cosmology label (e.g., 'c000').
+        Cosmology label (e.g., '000').
     zsnap : float
         Redshift of the box snapshot.
     hod : str, optional
@@ -334,13 +345,13 @@ def get_box_stats_fn(stats_dir=Path(os.getenv('SCRATCH', '.')) / 'measurements',
         Measurement filename(s).
         Multiple filenames are returned as a list when imock is '*'.
     """
-    _default_options = dict(version='v2', tracer=None, cosmo=None, hod='base', los='z', imock=None)
+    _default_options = dict(version=None, tracer=None, cosmo=None, hod=None, zsnap=None, los='z', imock=None)
     catalog_options = kwargs.pop('catalog', {})
     if not catalog_options:
-        kwargs_options = {key: kwargs.pop(key, _default_options[key]) for key, value in _default_options.items()}
+        kwargs_options = {key: kwargs[key] for key, value in _default_options.items()}
         catalog_options = _unzip_catalog_options(kwargs_options)
     else:
-        catalog_options = _merge_catalog_options(catalog_options, {key: kwargs.pop(key) for key in kwargs if key in _default_options}, zipped=[None, True])
+        catalog_options = _merge_catalog_options(catalog_options, {key: kwargs.pop(key) for key in list(kwargs) if key in _default_options}, zipped=[None, True])
         for tracer in catalog_options:
             catalog_options[tracer].setdefault('imock', None)
     catalog_options = _zip_catalog_options(catalog_options, squeeze=False)
@@ -366,10 +377,10 @@ def get_box_stats_fn(stats_dir=Path(os.getenv('SCRATCH', '.')) / 'measurements',
     version = join_if_not_none(str, 'version')
     if version: stats_dir = stats_dir / version
     tracer = join_tracers(check_is_not_none('tracer'))
-    cosmo = join_tracers(check_is_not_none('cosmo'))
-    zrange = join_if_not_none(lambda zrange: f'z{zrange[0]:.1f}-{zrange[1]:.1f}', 'zrange')
-    zrange = f'_{zrange}' if zrange else ''
-    hod = join_tracers(check_is_not_none('hod'))
+    cosmo = join_if_not_none(str, 'cosmo')
+    cosmo = f'_c{cosmo}' if cosmo else ''
+    zsnap = join_tracers(list(map(str, check_is_not_none('zsnap'))))
+    hod = join_if_not_none(str, 'hod')
     hod = f'_{hod}' if hod else ''
     los = join_tracers(check_is_not_none('los'))
     extra = f'_{extra}' if extra else ''
@@ -384,5 +395,5 @@ def get_box_stats_fn(stats_dir=Path(os.getenv('SCRATCH', '.')) / 'measurements',
         basis = kwargs.get('basis', None)
         basis = f'_{basis}' if basis else ''
         kind = f'mesh3_spectrum{basis}_poles'
-    basename = f'{kind}_{tracer}{zrange}_{cosmo}{hod}_los-{los}{extra}{imock}.{ext}'
+    basename = f'{kind}_{tracer}_z{zsnap}{cosmo}{hod}_los-{los}{extra}{imock}.{ext}'
     return stats_dir / basename

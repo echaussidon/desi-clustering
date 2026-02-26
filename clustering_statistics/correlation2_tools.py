@@ -197,7 +197,7 @@ def compute_particle2_correlation(*get_data_randoms, auw=None, cut=None, battrs:
 
 
 
-def compute_box_particle2_correlation(*get_data, battrs: dict=None, mattrs: dict=None):
+def compute_box_particle2_correlation(*get_data, battrs: dict=None, mattrs: dict=None, los='z'):
     """
     Compute two-point correlation function using :mod:`cucount.jax`.
 
@@ -211,6 +211,8 @@ def compute_box_particle2_correlation(*get_data, battrs: dict=None, mattrs: dict
         Bin attributes for cucount.jax.BinAttrs. If None, default bins are used. See cucount.jax.BinAttrs.
     mattrs : dict, array, optional
         Mesh attributes; typically a dictionary with 'boxsize' and 'boxcenter'.
+    los : {'x', 'y', 'z', array-like}, optional
+        Line-of-sight direction. If 'x', 'y', 'z' use fixed axes, or provide a 3-vector.
 
     Returns
     -------
@@ -221,7 +223,7 @@ def compute_box_particle2_correlation(*get_data, battrs: dict=None, mattrs: dict
     from lsstypes import Count2, Count2Correlation
 
     with jax.make_mesh((jax.device_count(),), axis_names=('x',), axis_types=(jax.sharding.AxisType.Auto,)):
-        all_data, all_shifted = [], [], []
+        all_data, all_shifted = [], []
 
         def get_pw(catalog):
             positions = catalog['POSITION']
@@ -287,11 +289,11 @@ def compute_box_particle2_correlation(*get_data, battrs: dict=None, mattrs: dict
         for all_shifted in zip(*all_shifted, strict=True):
             if jax.process_index() == 0:
                 logger.info(f'Processing random {iran:d}.')
-            iran += 1
             if all(shifted is not None for shifted in all_shifted):
                 SS.append(get_counts(*all_shifted))
                 DS.append(get_counts(all_data[0], all_shifted[-1]))
                 SD.append(get_counts(all_shifted[0], all_data[-1]))
+                iran += 1
 
     if iran:
         DS, SD, SS = (types.sum(XX) for XX in [DS, SD, SS])

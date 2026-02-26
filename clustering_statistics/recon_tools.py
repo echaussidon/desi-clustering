@@ -108,6 +108,7 @@ def compute_box_reconstruction(get_data, mattrs=None, mode='recsym', zsnap=None,
     mattrs = mattrs or {}
     with create_sharding_mesh(meshsize=mattrs.get('meshsize', None)):
         data = prepare_jaxpower_particles(get_data, mattrs=mattrs, return_inverse=True)[0]['data']
+        mattrs = data.attrs
         delta = estimate_particle_delta(data, smoothing_radius=smoothing_radius)
 
         from cosmoprimo.fiducial import DESI
@@ -116,8 +117,7 @@ def compute_box_reconstruction(get_data, mattrs=None, mode='recsym', zsnap=None,
 
         recon = jax.jit(IterativeFFTReconstruction, static_argnames=['los', 'halo_add', 'niterations'], donate_argnums=[0])(delta, growth_rate=growth_rate, bias=bias, los=los, halo_add=0)
         data_positions_rec = recon.read_shifted_positions(data.positions)
-        # not data.size, as data.size isn't conserved by exchange, but data.sum() is conserved (sum of weights)
-        randoms = generate_uniform_particles(mattrs, size=nran * int(data.sum()), seed=(42, 'index'), echange=True, backend='mpi')
+        randoms = generate_uniform_particles(mattrs, size=nran * data.size, seed=(42, 'index'), exchange=True, backend='mpi', return_inverse=True)
         assert mode in ['recsym', 'reciso']
         # RecSym = remove large scale RSD from randoms
         kwargs = {}

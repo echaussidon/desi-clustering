@@ -638,7 +638,7 @@ def compute_rotation_mesh2_spectrum(window: types.WindowMatrix, covariance: type
     return rotation
 
 
-def compute_box_mesh2_spectrum(*get_data, ells=(0, 2, 4), los='z', cache=None, mattrs=None):
+def compute_box_mesh2_spectrum(*get_data, ells=(0, 2, 4), edges=None, los='z', cache=None, mattrs=None):
     r"""
     Compute the 2-point spectrum multipoles for a cubic box using :mod:`jaxpower`.
 
@@ -711,7 +711,7 @@ def compute_box_mesh2_spectrum(*get_data, ells=(0, 2, 4), los='z', cache=None, m
         jax.block_until_ready(spectrum)
         if jax.process_index() == 0:
             logger.info('Mesh-based computation finished')
-        return
+    return spectrum
 
 
 def compute_window_box_mesh2_spectrum(spectrum: types.Mesh2SpectrumPoles, zsnap: float=None):
@@ -730,11 +730,12 @@ def compute_window_box_mesh2_spectrum(spectrum: types.Mesh2SpectrumPoles, zsnap:
     """
     from jaxpower import create_sharding_mesh, MeshAttrs, BinMesh2SpectrumPoles, compute_mesh2_spectrum_window
 
-    mattrs = MeshAttrs(**{name: spectrum.attrs[name] for name in ['boxsize', 'boxcenter', 'meshsize']})
+    mattrs = {name: spectrum.attrs[name] for name in ['boxsize', 'boxcenter', 'meshsize']}
     los = spectrum.attrs['los']
     ells = spectrum.ells
     pole = spectrum.get(0)
     with create_sharding_mesh(meshsize=mattrs.get('meshsize', None)):
+        mattrs = MeshAttrs(**mattrs)
         bin = BinMesh2SpectrumPoles(mattrs, edges=pole.edges('k'), ells=ells)
         #edgesin = np.linspace(bin.edges.min(), bin.edges.max(), 2 * (len(bin.edges) - 1))
         edgesin = bin.edges
@@ -766,6 +767,7 @@ def compute_covariance_box_mesh2_spectrum(theory: types.Mesh2SpectrumPoles=None,
     from jaxpower import create_sharding_mesh, MeshAttrs, compute_spectrum2_covariance
     # Add shotnoise to theory
     theory_sn = theory.map(lambda pole: pole.clone(num_shotnoise=pole.values('num_shotnoise') * 0.), level=2)
+    mattrs = mattrs or {}
     with create_sharding_mesh(meshsize=mattrs.get('meshsize', None)):
         mattrs = MeshAttrs(**mattrs)
         covariance = compute_spectrum2_covariance(mattrs, theory_sn)  # Gaussian, diagonal covariance

@@ -68,7 +68,6 @@ def test_spectrum3(stats=['mesh3_spectrum']):
 
 def test_recon(stat='recon_particle2_correlation'):
     stats_dir = Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks'
-    stat = 'mesh2_spectrum'
     for tracer in ['LRG']:
         zrange = tools.propose_fiducial('zranges', tracer)[0]
         for region in ['NGC', 'SGC'][:1]:
@@ -189,7 +188,7 @@ if __name__ == '__main__':
 
     os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.8'
     from jax import config
-    config.update('jax_enable_x64', False)
+    config.update('jax_enable_x64', True)
     jax.distributed.initialize()
     setup_logging()
 
@@ -199,12 +198,12 @@ if __name__ == '__main__':
     #test_stats_fn()
     #test_auw(stats=['mesh2_spectrum'])
     #test_bitwise(stats=['mesh2_spectrum'])
-    #test_expand_randoms()
+    test_expand_randoms()
     #test_optimal_weights()
     #test_cross()
     #test_window()
     #test_spectrum3()
     #test_norm()
     #test_recon()
-    test_covariance()
+    #test_covariance()
     #jax.distributed.shutdown()

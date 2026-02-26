@@ -41,7 +41,7 @@ def run_stats(tracer='LRG', version='abacus-2ndgen', imocks=[0], stats_dir=Path(
     import jax
     from jax import config
     config.update('jax_enable_x64', True)
-    os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.9'
+    os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.8'
     try: jax.distributed.initialize()
     except RuntimeError: print('Distributed environment already initialized')
     else: print('Initializing distributed environment')

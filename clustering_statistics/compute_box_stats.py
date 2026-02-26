@@ -61,7 +61,6 @@ def compute_box_stats_from_options(stats, cache=None,
 
     with_recon = any('recon' in stat for stat in stats)
     with_catalogs = True
-
     data, shifted = {}, {}
     if with_catalogs:
         for tracer in tracers:
@@ -79,7 +78,7 @@ def compute_box_stats_from_options(stats, cache=None,
             nran = recon_options.pop('nran', 1)
             recon_options['mattrs'] = cmattrs | recon_options.get('mattrs', {})
             data[tracer]['POSITION_REC'], randoms_rec_positions = compute_box_reconstruction(lambda: {'data': data[tracer]}, nran=nran, **recon_options)
-            shifted[tracer] = [Catalog({'POSITION_REC': _positions}, mpicomm=data[tracer].mpicomm) for _positions in np.split(randoms_rec_positions, nran)]
+            shifted[tracer] = [Catalog({'POSITION_REC': _positions, 'INDWEIGHT': np.ones_like(_positions[..., 0])}, mpicomm=data[tracer].mpicomm) for _positions in np.split(randoms_rec_positions, nran, axis=0)]
 
     fn_catalog_options = dict(catalog_options)
 
@@ -95,7 +94,7 @@ def compute_box_stats_from_options(stats, cache=None,
 
             def get_data(tracer):
                 if recon:
-                    return {'data': get_catalog_recon(data[tracer]), 'randoms': [get_catalog_recon(random) for random in shifted[tracer]]}
+                    return {'data': get_catalog_recon(data[tracer]), 'shifted': [get_catalog_recon(random) for random in shifted[tracer]]}
                 return {'data': data[tracer]}
 
             correlation = compute_box_particle2_correlation(*[functools.partial(get_data, tracer) for tracer in tracers], **correlation_options)
@@ -116,7 +115,7 @@ def compute_box_stats_from_options(stats, cache=None,
                     return {'data': data[tracer]}
 
                 spectrum = func(*[functools.partial(get_data, tracer) for tracer in tracers], cache=cache, **spectrum_options)
-                fn = get_box_stats_fn(kind=stat, catalog=fn_catalog_options, **kw)
+                fn = get_box_stats_fn(kind=stat, catalog=fn_catalog_options, **spectrum_options)
                 box_tools.write_stats(fn, spectrum)
 
     jax.experimental.multihost_utils.sync_global_devices('spectrum')  # such that spectrum ready for window
@@ -135,7 +134,7 @@ def compute_box_stats_from_options(stats, cache=None,
             spectrum = types.read(spectrum_fn)
 
             window = func(spectrum=spectrum, **window_options)
-            fn = get_box_stats_fn(kind=stat, catalog=fn_catalog_options, **kw)
+            fn = get_box_stats_fn(kind=stat, catalog=fn_catalog_options, **window_options)
             box_tools.write_stats(fn, window)
 
     # Covariance matrix
@@ -187,8 +186,8 @@ def compute_box_stats_from_options(stats, cache=None,
             fields = {tracer: box_tools.get_simple_tracer(tracer) for tracer in tracers}
             theory = {tuple(fields[tracer] for tracer in tracers2): _read_tracer(theory_fn, tracers2) for tracers2 in itertools.product(tracers, repeat=2)}
             theory = types.ObservableTree(list(theory.values()), fields=list(theory.keys()))
-            covariance = func(spectrum=spectrum, theory=theory, **covariance_options)
-            fn = get_box_stats_fn(kind=stat, catalog=fn_catalog_options, **kw)
+            covariance = func(theory=theory, **covariance_options)
+            fn = get_box_stats_fn(kind=stat, catalog=fn_catalog_options, **covariance_options)
             box_tools.write_stats(fn, covariance)
 
 

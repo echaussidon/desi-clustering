@@ -166,10 +166,10 @@ def compute_stats_from_options(stats, analysis='full_shape', cache=None,
 
                 def get_data(tracer):
                     if recon:
-                        return (get_catalog_recon(zdata[tracer]),
-                                zrandoms[tracer],
-                                [get_catalog_recon(zrandom) for zrandom in zrandoms[tracer]])
-                    return (zdata[tracer], zrandoms[tracer])
+                        return {'data': get_catalog_recon(zdata[tracer]),
+                                'randoms': zrandoms[tracer],
+                                'shifted': [get_catalog_recon(zrandom) for zrandom in zrandoms[tracer]]}
+                    return {'data': zdata[tracer], 'randoms': zrandoms[tracer]}
 
                 correlation = compute_particle2_correlation(*[functools.partial(get_data, tracer) for tracer in tracers], **correlation_options)
                 fn = get_stats_fn(kind=stat, catalog=fn_catalog_options, **correlation_options)

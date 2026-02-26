@@ -255,7 +255,7 @@ def compute_window_mesh3_spectrum(*get_data_randoms, spectrum, ibatch: tuple=Non
 def compute_box_mesh3_spectrum(*get_data, mattrs=None,
                                 basis='sugiyama-diagonal', ells=[(0, 0, 0), (2, 0, 2)], edges=None, los='z',
                                 buffer_size=0, cache=None):
-    """
+    r"""
     Compute the 3-point spectrum multipoles for a cubic box using :mod:`jaxpower`.
 
     Parameters
@@ -329,4 +329,4 @@ def compute_box_mesh3_spectrum(*get_data, mattrs=None,
         jax.block_until_ready(spectrum)
         if jax.process_index() == 0:
             logger.info('Mesh-based computation finished')
-        return spectrum
+    return spectrum
