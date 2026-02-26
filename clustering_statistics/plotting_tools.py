@@ -3,6 +3,7 @@ from matplotlib import pyplot as plt
 import lsstypes as types
 from clustering_statistics import tools
 
+
 def get_means_covs(kind, versions, tracer, zrange, region, stats_dir, rebin=1):
     means, covs = {}, {}
     for version in versions:
@@ -33,7 +34,7 @@ def plot_stats(kind, versions, tracer, zrange, region, stats_dir, ells=(0,2,4), 
         # use first item from versions as reference
         reference = next(iter(versions))
     if linestyles is None: linestyles = dict(zip(versions, ['-']*len(versions)))
-    if colors is None: colors = dict(zip(cases, [f'C{i}' for i in range(len(versions))]))
+    if colors is None: colors = dict(zip(versions, [f'C{i:d}' for i in range(len(versions))]))
     if figure is None:
         fig, lax = plt.subplots(len(ells) * 2, figsize=(6, 10), sharex=True, gridspec_kw={'height_ratios': [2.5, 1] * len(ells)})
     else:
@@ -85,7 +86,7 @@ def plot_stats(kind, versions, tracer, zrange, region, stats_dir, ells=(0,2,4), 
                 ax.set_ylabel(rf'$B_{{{ell[0]:d}{ell[1]:d}{ell[2]:d}}}(k, k)$ [$(\mathrm{{Mpc}}/h)^4$]')
                 ax.set_yscale('log')
                 ax.set_xscale('log')
-            
+
             for iversion, version in enumerate(versions):
                 if ell not in means[version].ells: continue
                 pole = means[version].get(ell)
@@ -104,7 +105,7 @@ def plot_stats(kind, versions, tracer, zrange, region, stats_dir, ells=(0,2,4), 
                 x = pole.coords('k')[..., 0]
                 ax.plot(x, (pole.value() - means[reference].get(ell).value()).real / std, color=colors[version], linestyle=linestyles[version])
         lax[-1].set_xlabel(r'$k$ [$h/\mathrm{Mpc}$]')
-    
+
     if save_fn and figure is None:
         plt.tight_layout()
         fig.savefig(save_fn, bbox_inches='tight', pad_inches=0.1, dpi=200)

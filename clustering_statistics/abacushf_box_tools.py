@@ -1,10 +1,13 @@
-from __future__ import annotations
 import os
 
-import numpy as np
 from pathlib import Path
-from typing import Iterable, Optional, Sequence, Union
+from typing import Iterable, Optional, Sequence, Union, Tuple
+
+import numpy as np
+from mpi4py import MPI
 from mockfactory import Catalog
+from .tools import _read_catalog, default_mpicomm, join_tracers, _unzip_catalog_options, _zip_catalog_options
+
 
 ABACUS_HF_ROOT = Path("/dvs_ro/cfs/cdirs/desi/mocks/cai/abacus_HF")
 
@@ -13,6 +16,7 @@ _ZSNAPS_COMMON = {
     "LRG": (0.500, 0.725, 0.950),
     "ELG": (0.950, 1.175, 1.475),
 }
+
 _ZSNAPS_QSO = {
     "v1": (1.400,),
     "variations": (1.400,),
@@ -201,7 +205,7 @@ def abacus_hf_mock_paths(
     imocks: Optional[Iterable[int]] = None,
     **kwargs,
 ) -> list[Path]:
-    
+
     v = _canon_version(version)
     n = _NREAL[v]
     ims = list(range(n)) if imocks is None else list(imocks)
@@ -235,84 +239,99 @@ def zsnap_to_zrange(zsnap: Union[float, int, str], tol: float = 2e-3) -> Tuple[f
     return _ZSNAP2ZRANGE[kbest]
 
 
-def get_hf_stats_fn(
-    stats_dir: Union[str, Path] = Path(os.getenv("SCRATCH", ".")) / "measurements",
-    *,
-    version: Optional[str] = None,
-    kind: str = "mesh2_spectrum",
-    tracer: str,
-    zsnap: Optional[Union[float, int, str]] = None,
-    zrange: Optional[Tuple[float, float]] = None,
-    region: str,                    # cbox
-    weight: str,                    # HOD flavor
-    imock: Union[int, str, None] = None,
-    extra: str = "",                # los
-    ext: str = "h5",
-    battrs: Optional[Iterable[str]] = None,
-    basis: Optional[str] = None,
-    imock_glob_max: int = 1000,
-) -> Union[Path, list[Path]]:
+def get_box_stats_fn(stats_dir='/global/cfs/cdirs/desi/science/gqc/y3_fits/mockchallenge_abacushf/measurements',
+                     kind='mesh2_spectrum', extra='', ext='h5', **kwargs):
+    """
+    Return measurement filename for box mocks with given parameters.
+
+    Parameters
+    ----------
+    stats_dir : str, Path
+        Directory containing the measurements.
+    version : str, optional
+        Measurement version. Default is 'v2'.
+    kind : str
+        Measurement kind. Options are 'particle2_correlation', 'mesh2_spectrum', 'mesh3_spectrum', etc.
+    tracer : str
+        Tracer name.
+    cosmo : str
+        Cosmology label (e.g., 'c000').
+    zrange : tuple, optional
+        Redshift range of interest. This will be mapped to a specific box snapshot.
+    hod : str, optional
+        HOD flavor (e.g., 'base_B', 'base_dv'). Default is 'base' (baseline HOD).
+    los : str, optional
+        Line of sight direction (e.g., 'z'). Default is 'z'.
+    imock : int, str, optional
+        Mock index. If '*', return all existing mock filenames.
+    extra : str, optional
+        Extra string to append to filename.
+    ext : str
+        File extension. Default is 'h5'.
+
+    Returns
+    -------
+    fn : str, Path, list
+        Measurement filename(s).
+        Multiple filenames are returned as a list when imock is '*'.
+    """
+    _default_options = dict(version='v2', tracer=None, cosmo=None, zrange=None, hod='base', los='z', imock=None)
+    catalog_options = kwargs.get('catalog', {})
+    if not catalog_options:
+        catalog_options = {key: kwargs.get(key, _default_options[key]) for key, value in _default_options.items()}
+        catalog_options = _unzip_catalog_options(catalog_options)
+    else:
+        catalog_options = _unzip_catalog_options(catalog_options)
+        _default_options.pop('tracer')
+        catalog_options = {tracer: _default_options | catalog_options[tracer] for tracer in catalog_options}
+    catalog_options = _zip_catalog_options(catalog_options, squeeze=False)
+    imock = catalog_options['imock']
+
+    if imock[0] and imock[0] == '*':
+        fns = [get_box_stats_fn(stats_dir=stats_dir, kind=kind, ext=ext, catalog=catalog_options | dict(imock=(imock,)), **kwargs) for imock in range(1000)]
+        return [fn for fn in fns if os.path.exists(fn)]
 
     stats_dir = Path(stats_dir)
-    if version:
-        stats_dir = stats_dir / str(version)
 
-    if imock == "*":
-        out = []
-        for i in range(imock_glob_max):
-            fn = get_hf_stats_fn(
-                stats_dir=stats_dir,
-                version=None,  # already applied
-                kind=kind,
-                tracer=tracer,
-                zsnap=zsnap,
-                zrange=zrange,
-                region=region,
-                weight=weight,
-                imock=i,
-                extra=extra,
-                ext=ext,
-                battrs=battrs,
-                basis=basis,
-                imock_glob_max=imock_glob_max,
-            )
-            if os.path.exists(fn):
-                out.append(Path(fn))
-        return out
+    def join_if_not_none(f, key):
+        items = catalog_options[key]
+        if any(item is not None for item in items):
+            return join_tracers(tuple(f(item) for item in items if item is not None))
+        return ''
 
-    if zrange is None:
-        if zsnap is None:
-            raise ValueError("Provide either zsnap or zrange.")
-        zrange = zsnap_to_zrange(zsnap)
+    def check_is_not_none(key):
+        items = catalog_options[key]
+        assert all(item is not None for item in items), f'provide {key}'
+        return items
 
-    ztag = f"z{zrange[0]:.1f}-{zrange[1]:.1f}"
-    ztag = f"_{ztag}" if ztag else ""
-
-    extra_s = f"_{extra}" if extra else ""
-    imock_s = f"_{imock}" if imock is not None else ""
-
-    corr_type = "smu"
-    if battrs is not None:
-        corr_type = "".join(list(battrs))
-
-    kind_norm = {
-        "mesh2_spectrum": "mesh2_spectrum_poles",
-        "particle2_correlation": f"particle2_correlation_{corr_type}",
-    }.get(kind, kind)
-
-    if "mesh3" in kind_norm:
-        basis_s = f"_{basis}" if basis else ""
-        kind_norm = f"mesh3_spectrum{basis_s}_poles"
-
-    basename = f"{kind_norm}_{tracer}{ztag}_{region}_{weight}{extra_s}{imock_s}.{ext}"
+    version = join_if_not_none(str, 'version')
+    if version: stats_dir = stats_dir / version
+    tracer = join_tracers(check_is_not_none('tracer'))
+    cosmo = join_tracers(check_is_not_none('cosmo'))
+    zrange = join_if_not_none(lambda zrange: f'z{zrange[0]:.1f}-{zrange[1]:.1f}', 'zrange')
+    zrange = f'_{zrange}' if zrange else ''
+    hod = join_tracers(check_is_not_none('hod'))
+    hod = f'_{hod}' if hod else ''
+    los = join_tracers(check_is_not_none('los'))
+    extra = f'_{extra}' if extra else ''
+    imock = join_if_not_none(str, 'imock')
+    imock = f'_{imock}' if imock else ''
+    corr_type = 'smu'
+    battrs = kwargs.get('battrs', None)
+    if battrs is not None: corr_type = ''.join(list(battrs))
+    kind = {'mesh2_spectrum': 'mesh2_spectrum_poles',
+            'particle2_correlation': f'particle2_correlation_{corr_type}'}.get(kind, kind)
+    if 'mesh3' in kind:
+        basis = kwargs.get('basis', None)
+        basis = f'_{basis}' if basis else ''
+        kind = f'mesh3_spectrum{basis}_poles'
+    basename = f'{kind}_{tracer}{zrange}_{cosmo}{hod}_los{los}{extra}{imock}.{ext}'
     return stats_dir / basename
 
 
-def get_clustering_positions_weights(fn, los="z", **kwargs):
-    import numpy as np
-    from mpi4py import MPI
+@default_mpicomm
+def read_clustering_catalog(fn, los="z", mpicomm=None, **kwargs):
 
-    mpicomm = MPI.COMM_WORLD
     mpiroot = 0
 
     catalog = None
@@ -321,8 +340,7 @@ def get_clustering_positions_weights(fn, los="z", **kwargs):
 
     if mpicomm.rank == mpiroot:
         kwargs = dict()
-        catalog = Catalog.read(fn, mpicomm=MPI.COMM_SELF, **kwargs)
-        catalog.get(catalog.columns())
+        catalog = _read_catalog(fn, mpicomm=MPI.COMM_SELF)
         boxsize = catalog.header.get("BOXSIZE", 2000.0)
         scalev = catalog.header.get("VELZ2KMS", None)
 
@@ -343,11 +361,7 @@ def get_clustering_positions_weights(fn, los="z", **kwargs):
 
     positions = np.column_stack([catalog["X"], catalog["Y"], catalog["Z"]])
 
-    try:
-        vsmear = catalog["VSMEAR"]
-    except Exception:
-        vsmear = np.zeros_like(catalog["VX"])
-
+    vsmear = catalog.get("VSMEAR", catalog.zeros())
     velocities = (
         np.column_stack([catalog["VX"] + vsmear, catalog["VY"] + vsmear, catalog["VZ"] + vsmear])
         / scalev
@@ -362,5 +376,4 @@ def get_clustering_positions_weights(fn, los="z", **kwargs):
     positions = positions + np.sum(velocities * vlos, axis=-1)[..., None] * vlos[None, :]
     positions = (positions + boxsize / 2.0) % boxsize - boxsize / 2.0
 
-    return positions, np.ones_like(positions[..., 0])
-
+    return Catalog({'POSITION': positions, 'INDWEIGHT': np.ones_like(positions[..., 0])}, mpicomm=mpicomm)

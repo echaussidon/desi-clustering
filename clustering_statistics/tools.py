@@ -127,7 +127,7 @@ def get_galactic_mask(ra, dec, galactic_fraction_percent='GAL040'):
     # TODO: Move file to a CAI directory
     mask_path = Path('/pscratch/sd/a/arosado/auxiliary/') / 'HFI_Mask_GalPlane-apo0_2048_R2.00.fits'
     galactic_mask = Catalog.read(mask_path)
-    
+
     # Read mask and determine ordering from FITS header
     is_nested = (galactic_mask.header['ORDERING'] == 'NESTED')
     mask = galactic_mask[galactic_fraction_percent]
@@ -145,7 +145,7 @@ def get_galactic_mask(ra, dec, galactic_fraction_percent='GAL040'):
     pix = hp.ang2pix(nside, th, phi, nest=is_nested)
     return mask[pix] > 0
 
-    
+
 def select_region(ra, dec, region=None):
     """
     Return mask of corresponding R.A./Dec. region.
@@ -233,9 +233,9 @@ def select_region(ra, dec, region=None):
     if 'GAL' in region:
         mask_galactic = get_galactic_mask(ra, dec, galactic_fraction_percent=region)
         return mask_galactic
-        
+
     raise ValueError('unknown region {}'.format(region))
-   
+
 
 def _make_tuple(item, n=None):
     if not isinstance(item, (list, tuple)):
@@ -564,10 +564,10 @@ def _merge_options(options1, options2):
     return options
 
 
-def get_catalog_fn(version=None, cat_dir=None, kind='data', tracer='LRG',
-                   region='NGC', weight='default-FKP', nran=10, imock=0, ext='h5', **kwargs):
+def get_catalog_fn(version: str=None, cat_dir: str=None, kind: str='data', tracer: str='LRG',
+                   region: str='NGC', weight: str='default-FKP', nran: int=10, imock: int=0, ext: str='h5', **kwargs):
     """
-    Return catalog filename(s) for given parameters.
+    Return catalog file name(s) for given parameters.
 
     Parameters
     ----------
@@ -592,12 +592,12 @@ def get_catalog_fn(version=None, cat_dir=None, kind='data', tracer='LRG',
 
     Returns
     -------
-    fn : str, Path, list
-        Catalog filename(s).
-        Multiple filenames are returned as a list when region is 'ALL' or when kind is 'randoms' or 'full_randoms'.
+    fn : Path, list
+        Catalog file name(s).
+        Multiple file names are returned as a list when region is 'ALL' or when kind is 'randoms' or 'full_randoms', or imock is '*'.
     """
     # these are region splits that require loading NGC+SGC
-    special_regions = ['S','ALL','SnoDES','ACT_DR6','PLANCK_PR4']+[f'GAL0{i}' for i in [20,40,60,70,80,90,97,99]] 
+    special_regions = ['S', 'ALL', 'SnoDES', 'ACT_DR6', 'PLANCK_PR4'] + [f'GAL0{i}' for i in [20, 40, 60, 70, 80, 90, 97, 99]]
     if region in ['N', 'NGC', 'NGCnoN']: region = 'NGC'
     elif region in ['SGC', 'SGCnoDES', 'DES']: region = 'SGC'
     elif 'full' not in kind:
@@ -696,7 +696,7 @@ def get_catalog_fn(version=None, cat_dir=None, kind='data', tracer='LRG',
         return cat_dir / f'{tracer}_{region}_{nran:d}_clustering.ran.{ext}'
 
 
-def get_stats_fn(stats_dir=Path(os.getenv('SCRATCH')) / 'measurements', kind='mesh2_spectrum', auw=None, cut=None, extra='', ext='h5', **kwargs):
+def get_stats_fn(stats_dir=Path(os.getenv('SCRATCH', '.')) / 'measurements', kind='mesh2_spectrum', auw=None, cut=None, extra='', ext='h5', **kwargs):
     """
     Return measurement filename for given parameters.
 
@@ -789,96 +789,6 @@ def get_stats_fn(stats_dir=Path(os.getenv('SCRATCH')) / 'measurements', kind='me
         if full not in kind:
             kind = kind.replace('mesh3_spectrum', full)
     basename = f'{kind}_{tracer}{zrange}_{region}_weight-{weight}{auw}{cut}{extra}{imock}.{ext}'
-    return stats_dir / basename
-
-
-def get_box_stats_fn(stats_dir='/global/cfs/cdirs/desi/science/gqc/y3_fits/mockchallenge_abacushf/measurements',
-                     kind='mesh2_spectrum', extra='', ext='h5', **kwargs):
-    """
-    Return measurement filename for box mocks with given parameters.
-
-    Parameters
-    ----------
-    stats_dir : str, Path
-        Directory containing the measurements.
-    version : str, optional
-        Measurement version. Default is 'v2'.
-    kind : str
-        Measurement kind. Options are 'particle2_correlation', 'mesh2_spectrum', 'mesh3_spectrum', etc.
-    tracer : str
-        Tracer name.
-    cosmo : str
-        Cosmology label (e.g., 'c000').
-    zrange : tuple, optional
-        Redshift range of interest. This will be mapped to a specific box snapshot.
-    hod : str, optional
-        HOD flavor (e.g., 'base_B', 'base_dv'). Default is 'base' (baseline HOD).
-    los : str, optional
-        Line of sight direction (e.g., 'z'). Default is 'z'.
-    imock : int, str, optional
-        Mock index. If '*', return all existing mock filenames.
-    extra : str, optional
-        Extra string to append to filename.
-    ext : str
-        File extension. Default is 'h5'.
-
-    Returns
-    -------
-    fn : str, Path, list
-        Measurement filename(s).
-        Multiple filenames are returned as a list when imock is '*'.
-    """
-    _default_options = dict(version='v2', tracer=None, cosmo=None, zrange=None, hod='base', los='z', imock=None)
-    catalog_options = kwargs.get('catalog', {})
-    if not catalog_options:
-        catalog_options = {key: kwargs.get(key, _default_options[key]) for key, value in _default_options.items()}
-        catalog_options = _unzip_catalog_options(catalog_options)
-    else:
-        catalog_options = _unzip_catalog_options(catalog_options)
-        _default_options.pop('tracer')
-        catalog_options = {tracer: _default_options | catalog_options[tracer] for tracer in catalog_options}
-    catalog_options = _zip_catalog_options(catalog_options, squeeze=False)
-    imock = catalog_options['imock']
-
-    if imock[0] and imock[0] == '*':
-        fns = [get_box_stats_fn(stats_dir=stats_dir, kind=kind, ext=ext, catalog=catalog_options | dict(imock=(imock,)), **kwargs) for imock in range(1000)]
-        return [fn for fn in fns if os.path.exists(fn)]
-
-    stats_dir = Path(stats_dir)
-
-    def join_if_not_none(f, key):
-        items = catalog_options[key]
-        if any(item is not None for item in items):
-            return join_tracers(tuple(f(item) for item in items if item is not None))
-        return ''
-
-    def check_is_not_none(key):
-        items = catalog_options[key]
-        assert all(item is not None for item in items), f'provide {key}'
-        return items
-
-    version = join_if_not_none(str, 'version')
-    if version: stats_dir = stats_dir / version
-    tracer = join_tracers(check_is_not_none('tracer'))
-    cosmo = join_tracers(check_is_not_none('cosmo'))
-    zrange = join_if_not_none(lambda zrange: f'z{zrange[0]:.1f}-{zrange[1]:.1f}', 'zrange')
-    zrange = f'_{zrange}' if zrange else ''
-    hod = join_tracers(check_is_not_none('hod'))
-    hod = f'_{hod}' if hod else ''
-    los = join_tracers(check_is_not_none('los'))
-    extra = f'_{extra}' if extra else ''
-    imock = join_if_not_none(str, 'imock')
-    imock = f'_{imock}' if imock else ''
-    corr_type = 'smu'
-    battrs = kwargs.get('battrs', None)
-    if battrs is not None: corr_type = ''.join(list(battrs))
-    kind = {'mesh2_spectrum': 'mesh2_spectrum_poles',
-            'particle2_correlation': f'particle2_correlation_{corr_type}'}.get(kind, kind)
-    if 'mesh3' in kind:
-        basis = kwargs.get('basis', None)
-        basis = f'_{basis}' if basis else ''
-        kind = f'mesh3_spectrum{basis}_poles'
-    basename = f'{kind}_{tracer}{zrange}_{cosmo}{hod}_los{los}{extra}{imock}.{ext}'
     return stats_dir / basename
 
 
@@ -1151,7 +1061,7 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
     zrange, region, weight_type, imock, tracer = (kwargs.get(key) for key in ['zrange', 'region', 'weight', 'imock', 'tracer'])
     assert weight_type is not None, 'provide weight'
     # these are region splits that require loading NGC+SGC
-    special_regions = ['S','ALL','SnoDES','ACT_DR6','PLANCK_PR4']+[f'GAL0{i}' for i in [20,40,60,70,80,90,97,99]] 
+    special_regions = ['S', 'ALL', 'SnoDES', 'ACT_DR6', 'PLANCK_PR4'] + [f'GAL0{i}' for i in [20, 40, 60, 70, 80, 90, 97, 99]]
     reshuffle_condition = kind == 'randoms' and (isinstance(reshuffle, dict) or (reshuffle is not None))
     if reshuffle_condition:
         # if randoms are going to be reshuffled, all regions are needed so we force it.
@@ -1162,14 +1072,14 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
     if region in special_regions or reshuffle_condition:
         # group in pairs (this assumes that fns is a list with the first half corresponds to filenames
         # of one region and the second half to another (e.g., NGC and SGC)
-        fns = list(zip(fns[:len(fns)//2],fns[len(fns)//2:])) if len(fns)>1 else fns
+        fns = list(zip(fns[:len(fns) // 2], fns[len(fns) // 2:])) if len(fns) > 1 else fns
     exists = {f: os.path.exists(f) for fn in fns for f in (fn if isinstance(fn, (list,tuple)) else [fn])}
     if not all(exists.values()):
         raise IOError(f'Catalogs {[fn for fn, ex in exists.items() if not ex]} do not exist!')
 
     if kind == 'randoms' and isinstance(expand, dict):
-        from_data = expand.get('from_data', ['Z','WEIGHT_SYS','FRAC_TLOBS_TILES'])
-        from_randoms = expand.get('from_randoms', ['RA','DEC','NTILE'])
+        from_data = expand.get('from_data', ['Z', 'WEIGHT_SYS', 'FRAC_TLOBS_TILES'])
+        from_randoms = expand.get('from_randoms', ['RA', 'DEC', 'NTILE'])
         parent_randoms_fn = expand['parent_randoms_fn']
         if not isinstance(parent_randoms_fn, (tuple, list)):
             parent_randoms_fn = [parent_randoms_fn]
