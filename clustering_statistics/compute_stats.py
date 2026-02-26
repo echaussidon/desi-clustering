@@ -101,7 +101,7 @@ def compute_stats_from_options(stats, analysis='full_shape', cache=None,
         for tracer in tracers:
             _catalog_options = dict(catalog_options[tracer])
             _catalog_options['zrange'] = (min(zrange[0] for zrange in zranges[tracer]), max(zrange[1] for zrange in zranges[tracer]))
-            if any(name in catalog_options.get('weight', '') for name in ['bitwise', 'compntile']):
+            if any(name in _catalog_options.get('weight', '') for name in ['bitwise', 'compntile']):
                 # sets NTILE-MISSING-POWER (missing_power) and per-tile completeness (completeness)
                 _catalog_options['binned_weight'] = read_full_catalog(kind='parent_data', **_catalog_options, attrs_only=True)
 
@@ -119,7 +119,7 @@ def compute_stats_from_options(stats, analysis='full_shape', cache=None,
         for tracer in tracers:
             recon_options = dict(options['recon'][tracer])
             # local sizes to select positions
-            data[tracer]['POSITION_REC'], randoms_rec_positions = compute_reconstruction(lambda: (data[tracer], Catalog.concatenate(randoms[tracer])), **recon_options)
+            data[tracer]['POSITION_REC'], randoms_rec_positions = compute_reconstruction(lambda: {'data': data[tracer], 'randoms': Catalog.concatenate(randoms[tracer])}, **recon_options)
             start = 0
             for random in randoms[tracer]:
                 size = len(random['POSITION'])
@@ -132,9 +132,7 @@ def compute_stats_from_options(stats, analysis='full_shape', cache=None,
 
         def get_data(tracer):
             _catalog_options = catalog_options[tracer] | dict(zrange=None)
-            fibered = read_full_catalog(kind='fibered_data', **_catalog_options)
-            full = read_full_catalog(kind='parent_data', **_catalog_options)
-            return (fibered, full)
+            return {kind: read_full_catalog(kind=kind, **_catalog_options) for kind in ['fibered_data', 'parent_data']}
 
         auw = compute_angular_upweights(*[functools.partial(get_data, tracer) for tracer in tracers])
         fn_catalog_options = {tracer: catalog_options[tracer] | dict(zrange=None) for tracer in tracers}
@@ -187,12 +185,13 @@ def compute_stats_from_options(stats, analysis='full_shape', cache=None,
                     def get_data(tracer):
                         czrandoms = Catalog.concatenate(zrandoms[tracer])
                         if recon:
-                            toret = (get_catalog_recon(zdata[tracer]), czrandoms,
-                                     get_catalog_recon(czrandoms))
+                            toret = {'data': get_catalog_recon(zdata[tracer]),
+                                     'randoms': czrandoms,
+                                     'shifted': get_catalog_recon(czrandoms)}
                         else:
-                            toret = (zdata[tracer], czrandoms)
+                            toret = {'data': zdata[tracer], 'randoms': czrandoms}
                         if selection_weights:
-                            return tuple(selection_weights[tracer](catalog) for catalog in toret)
+                            toret = {name: selection_weights[tracer](catalog) for name, catalog in toret.items()}
                         return toret
 
                     spectrum = func(*[functools.partial(get_data, tracer) for tracer in tracers], cache=cache, **spectrum_options)
@@ -213,9 +212,9 @@ def compute_stats_from_options(stats, analysis='full_shape', cache=None,
 
                 def get_data(tracer):
                     czrandoms = Catalog.concatenate(zrandoms[tracer])
-                    toret = (zdata[tracer], czrandoms)
+                    toret = {'data': zdata[tracer], 'randoms': czrandoms}
                     if selection_weights:
-                        return tuple(selection_weights[tracer](catalog) for catalog in toret)
+                        toret = {name: selection_weights[tracer](catalog) for name, catalog in toret.items()}
                     return toret
 
                 spectrum_fn = window_options.pop('spectrum', None)
@@ -254,8 +253,8 @@ def compute_stats_from_options(stats, analysis='full_shape', cache=None,
 
                 def get_data(tracer):
                     czrandoms = Catalog.concatenate(zrandoms[tracer])
-                    return (zdata[tracer], czrandoms)
-                
+                    return {'data': zdata[tracer], 'randoms': czrandoms}
+
                 def _check_fn(fn, tracers, name=''):
                     if len(tracers) == 1:
                         fn = {(tracer, tracer): fn for tracer in tracers}

@@ -6,25 +6,27 @@ srun python run_abacushf_cubic.py
 import os
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-import time
+#sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+#import time
 import logging
 import itertools
 import numpy as np
 from dataclasses import dataclass
 from typing import Iterable, Optional
-from clustering_statistics.tools_abacushf_cubic import (
+from clustering_statistics.abacushf_box_tools import (
     abacus_hf_mock_path,
-    get_hf_stats_fn,
-    get_clustering_positions_weights,
+    get_box_stats_fn,
+    read_clustering_catalog,
     zsnap_to_zrange,
 )
-from clustering_statistics.spectrum2_tools import compute_box_mesh2_spectrum, compute_box_mesh2_cross_spectrum
-from clustering_statistics.spectrum3_tools import compute_box_mesh3_spectrum, compute_box_mesh3_cross_spectrum
-from clustering_statistics.tools import get_box_stats_fn
+from clustering_statistics.spectrum2_tools import compute_box_mesh2_spectrum
+from clustering_statistics.spectrum3_tools import compute_box_mesh3_spectrum
+from clustering_statistics import tools
 from mockfactory import setup_logging
 
+
 logger = logging.getLogger('run_abacushf_cubic')
+
 
 @dataclass(frozen=True)
 class Task:
@@ -60,7 +62,7 @@ class Task:
                 retval.append(cache[tracer])
                 continue
             data_fn = abacus_hf_mock_path(version=self.version, tracer=tracer, zsnap=self.zsnap, imock=self.imock, flavor=flavor, cbox=self.cbox)
-            get_data = lambda data_fn=data_fn, los=self.los, zsnap=self.zsnap: get_clustering_positions_weights(data_fn, los=los, zsnap=zsnap)
+            get_data = lambda data_fn=data_fn, los=self.los, zsnap=self.zsnap: read_clustering_catalog(data_fn, los=los, zsnap=zsnap)
             cache[tracer] = get_data
             retval.append(get_data)
         retval = tuple(retval)
@@ -100,7 +102,7 @@ def iter_tasks(
                             for flavor in flavors:
                                 out.append(Task(version, tracer, float(zsnap), int(imock), los, flavor, cbox))
                         else:
-                            for flavor in flavors_for(version, tracer):                
+                            for flavor in flavors_for(version, tracer):
                                 out.append(Task(version, (tracer,), float(zsnap), int(imock), los, (flavor,), cbox))
     for task in out:
         task.check()
@@ -110,9 +112,7 @@ def _maybe_skip(fn: Path, overwrite: bool) -> bool:
     return (not overwrite) and fn.exists()
 
 
-def run_task(task: Task, todo: set[str], spectrum_args: dict, overwrite: bool = False):
-    import jax
-    from jaxpower.mesh import create_sharding_mesh
+def run_task(task: Task, todo: set[str], spectrum_args: dict, overwrite: bool=False):
 
     cache = {}
 
@@ -129,41 +129,22 @@ def run_task(task: Task, todo: set[str], spectrum_args: dict, overwrite: bool = 
         ext="h5",
     )
 
-
     if "mesh2_spectrum" in todo and len(task.tracer) in [1, 2]:
         out_fn = get_box_stats_fn(**stats_common, kind="mesh2_spectrum")
         if not _maybe_skip(out_fn, overwrite):
-            with create_sharding_mesh():
-                if task.compute_cross_spectrum():
-                    spectrum = compute_box_mesh2_cross_spectrum(
-                        *task.get_data_funcs(), get_shifted=GET_SHIFTED, get_shifted2=GET_SHIFTED2, cache=cache, los=task.los, **spectrum_args
-                    )
-                else:
-                    spectrum = compute_box_mesh2_spectrum(
-                        *task.get_data_funcs(), get_shifted=GET_SHIFTED, cache=cache, los=task.los, **spectrum_args
-                    )
-                if out_fn is not None and jax.process_index() == 0:
-                    logger.info(f'Writing to {out_fn}')
-                    spectrum.write(out_fn)
-                jax.clear_caches()
+            spectrum = compute_box_mesh2_spectrum(*task.get_data_funcs(), cache=cache, los=task.los, **spectrum_args)
+            if out_fn is not None:
+                tools.write_stats(spectrum, out_fn)
+            #jax.clear_caches()
 
     if "mesh3_spectrum_scoccimarro" in todo and len(task.tracer) in [1, 3]:
         bargs = spectrum_args | dict(basis="scoccimarro", ells=[0, 2], cellsize=8)
         out_fn = get_box_stats_fn(**stats_common, kind="mesh3_spectrum", basis=bargs["basis"])
         if not _maybe_skip(out_fn, overwrite):
-            with create_sharding_mesh():
-                if task.compute_cross_spectrum():
-                    spectrum = compute_box_mesh3_cross_spectrum(
-                        *task.get_data_funcs(), get_shifted=GET_SHIFTED, cache=cache , los=task.los, **bargs
-                    )
-                else:
-                    spectrum = compute_box_mesh3_spectrum(
-                        *task.get_data_funcs(), get_shifted=GET_SHIFTED, cache=cache , los=task.los, **bargs
-                    )
-                if out_fn is not None and jax.process_index() == 0:
-                    logger.info(f'Writing to {out_fn}')
-                    spectrum.write(out_fn)
-                jax.clear_caches()
+            spectrum = compute_box_mesh3_spectrum(*task.get_data_funcs(), cache=cache , los=task.los, **bargs)
+            if out_fn is not None:
+                tools.write_stats(spectrum, out_fn)
+            #jax.clear_caches()
 
     if "mesh3_spectrum_sugiyama" in todo and len(task.tracer) in [1, 3]:
         bargs = spectrum_args | dict(
@@ -173,19 +154,9 @@ def run_task(task: Task, todo: set[str], spectrum_args: dict, overwrite: bool = 
         )
         out_fn = get_box_stats_fn(**stats_common, kind="mesh3_spectrum", basis=bargs["basis"])
         if not _maybe_skip(out_fn, overwrite):
-            with create_sharding_mesh():
-                if task.compute_cross_spectrum():
-                    spectrum = compute_box_mesh3_cross_spectrum(
-                        *task.get_data_funcs(), get_shifted=GET_SHIFTED, cache=cache , los=task.los, **bargs
-                    )
-                else:
-                    spectrum = compute_box_mesh3_spectrum(
-                        *task.get_data_funcs(), get_shifted=GET_SHIFTED, cache=cache , los=task.los, **bargs
-                    )
-                if out_fn is not None and jax.process_index() == 0:
-                    logger.info(f'Writing to {out_fn}')
-                    spectrum.write(out_fn)
-                jax.clear_caches()
+            spectrum = compute_box_mesh3_spectrum(*task.get_data_funcs(), cache=cache, los=task.los, **bargs)
+            if out_fn is not None:
+                tools.write_stats(spectrum, out_fn)
 
 
 # ---------------- config ----------------
@@ -220,10 +191,8 @@ TODO = {
 
 # ---------------- end config ----------------
 
-SPECTRUM_ARGS = dict(boxsize=2000.,ells=(0, 2, 4), cellsize=5.)   # for mesh2
+SPECTRUM_ARGS = dict(mattrs=dict(boxsize=2000., meshsize=400, boxcenter=0), ells=(0, 2, 4))   # for mesh2
 CROSS_SPECTRUM_ARGS = SPECTRUM_ARGS | dict(ells=(0, 1, 2, 3, 4, 5))   # for cross mesh2
-GET_SHIFTED = None
-GET_SHIFTED2 = None
 OVERWRITE = True
 
 NREAL = {"v1": 25, "v2": 25, "variations": 6}
@@ -260,4 +229,5 @@ def main():
 
 
 if __name__ == '__main__':
+
     main()

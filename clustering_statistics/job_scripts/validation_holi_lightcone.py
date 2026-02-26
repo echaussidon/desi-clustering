@@ -22,7 +22,7 @@ stats_dir = Path(os.getenv('CFS')) / 'cai' / 'holi_lightcone_validation'
 plots_dir = Path('./_plots')
 
 
-def run_stats(tracer='LRG', zranges=None, version='v4.80', weight='default-FKP', imocks=[0], stats_dir=stats_dir, stats=['mesh2_spectrum'], get_catalog_fn=tools.get_catalog_fn):
+def run_stats(tracer='LRG', zranges=None, version='holi-v4.80', weight='default-FKP', imocks=[0], stats_dir=stats_dir, stats=['mesh2_spectrum'], get_catalog_fn=tools.get_catalog_fn):
     # Everything inside this function will be executed on the compute nodes;
     # This function must be self-contained; and cannot rely on imports from the outer scope.
     import os
@@ -53,15 +53,16 @@ def run_stats(tracer='LRG', zranges=None, version='v4.80', weight='default-FKP',
         for imock in imocks:
             regions = ['NGC', 'SGC'][:1]
             for region in regions:
-                options = dict(catalog=dict(version=version, tracer=tracer, zrange=zranges, region=region, weight=weight, imock=imock, nran=18), mesh2_spectrum={}, **kw)
+                options = dict(catalog=dict(version=version, tracer=tracer, zrange=zranges, region=region, weight=weight, imock=imock), mesh2_spectrum={}, **kw)
                 options = fill_fiducial_options(options, analysis='full_shape_protected' if 'data' in version else 'full_shape')
                 if 'uchuu-hf-complete' in version:
                     for tracer in options['catalog']:
                         options['catalog'][tracer]['nran'] = min(options['catalog'][tracer]['nran'], 4)
                 compute_stats_from_options(stat, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), get_catalog_fn=get_catalog_fn, cache=cache, **options)
+    #jax.distributed.shutdown()
 
 
-def plot_density(imock=[0], tracer='LRG', zranges=None, version='v4.80', weight='default', plots_dir=plots_dir, nside=64, get_catalog_fn=tools.get_catalog_fn):
+def plot_density(imock=[0], tracer='LRG', zranges=None, version='holi-v4.80', weight='default', plots_dir=plots_dir, nside=64, get_catalog_fn=tools.get_catalog_fn):
     from clustering_statistics.density_tools import plot_density_projections
     if zranges is None:
         zranges = tools.propose_fiducial('zranges', tracer)
@@ -70,15 +71,19 @@ def plot_density(imock=[0], tracer='LRG', zranges=None, version='v4.80', weight=
     for zrange in [None]:
         edges = {'RA': np.linspace(0., 360., 361),
                  'DEC': np.linspace(-90., 90., 181)}
+        #def read_catalog(kind='data', **kwargs):
+        #    fn = get_catalog_fn(kind=kind, **kwargs)
+        #    return tools._read_catalog(fn)
         catalog = dict(version=version, tracer=tracer, zrange=zrange, region=region, weight=weight)
-        #plot_density_projections(get_catalog_fn=get_catalog_fn, divide_randoms='same', catalog=catalog, imock=imock, edges={name: edges[name] for name in ['RA', 'DEC']}, fn=plots_dir / f'angular_density_fluctuations_{version}_weight-{weight}_{tracer}_{region}.png', nside=nside, map_q=(0.1, 0.9))
+        plot_density_projections(get_catalog_fn=get_catalog_fn, read_catalog=read_catalog, divide_randoms='same', catalog=catalog,
+                                 imock=imock, edges={name: edges[name] for name in ['RA', 'DEC']}, fn=plots_dir / f'angular_density_fluctuations_{version}_weight-{weight}_{tracer}_{region}.png', nside=nside, map_q=(0.1, 0.9))
 
     for zrange in zranges:
         zstep = 0.01
         edges = {'Z': np.arange(zrange[0], zrange[1] + zstep, zstep),
                  'RA': np.linspace(0., 360., 361),
                  'DEC': np.linspace(-90., 90., 181)}
-        plot_density_projections(get_catalog_fn=get_catalog_fn, divide_randoms='same', catalog=catalog,
+        plot_density_projections(get_catalog_fn=get_catalog_fn, divide_randoms=True, catalog=catalog,
                                  imock=imock, edges=edges, fn=plots_dir / f'density_fluctuations_{version}_weight-{weight}_{tracer}_{region}_z{zrange[0]:.1f}-{zrange[1]:.1f}.png', nside=nside)
         plot_density_projections(get_catalog_fn=get_catalog_fn, divide_randoms=False, catalog=catalog,
                                  imock=imock, edges=edges, fn=plots_dir / f'density_{version}_weight-{weight}_{tracer}_{region}_z{zrange[0]:.1f}-{zrange[1]:.1f}.png', nside=nside)
@@ -88,7 +93,6 @@ def make_merged_random_catalog(imocks=[], tracer='LRG', version='v4.80', stats_d
     all_z = []
     for imock in imocks:
         fn = get_catalog_fn(kind='data', tracer=tracer, version=version, imock=imock)
-        print(fn)
         z = tools._read_catalog(fn)['Z']
         all_z.append(z)
     all_z = np.concatenate(all_z, axis=0)
@@ -115,7 +119,7 @@ def fit_large_scales(imock=0, tracer='LRG', zranges=None, version='v4.80', weigh
     if zranges is None:
         zranges = tools.propose_fiducial('zranges', tracer)
 
-    for zrange in zranges:
+    for zrange in zranges[-1:]:
         for region in ['NGC', 'SGC'][:1]:
             kw_catalog = dict(imock=imock, tracer=tracer, zrange=zrange, region=region, version=version, weight=weight)
             # Preliminary fit to the data
@@ -141,7 +145,7 @@ def fit_large_scales(imock=0, tracer='LRG', zranges=None, version='v4.80', weigh
                 bin = BinMesh2SpectrumPoles(mattrs, edges={'step': 0.001}, ells=spectrum.ells)
                 data = tools.read_clustering_catalog(kind='data', **kw_catalog, get_catalog_fn=get_catalog_fn)
                 randoms = tools.read_clustering_catalog(kind='randoms', **kw_catalog, get_catalog_fn=get_catalog_fn)
-                _, randoms, _ = prepare_jaxpower_particles(lambda: (data, randoms), mattrs=mattrs)[0]
+                randoms = prepare_jaxpower_particles(lambda: {'randoms': randoms}, mattrs=mattrs)[0]['randoms']
                 pole = next(iter(spectrum))
                 kw_paint = dict(resampler='tsc', interlacing=3, compensate=True)
                 meshes = []
@@ -170,11 +174,11 @@ def fit_large_scales(imock=0, tracer='LRG', zranges=None, version='v4.80', weigh
 if __name__ == '__main__':
 
     #todo = ['test']
-    todo = ['density']
+    #todo = ['density']
     #todo = ['randoms']
-    #todo = ['large_scales']
+    todo = ['large_scales']
     weight = 'default'
-    stats = ['mesh2_spectrum', 'mesh3_spectrum_sugiyama', 'mesh3_spectrum_scoccimarro', 'window_mesh2_spectrum'][:1]
+    stats = ['mesh2_spectrum', 'mesh3_spectrum_sugiyama', 'mesh3_spectrum_scoccimarro', 'window_mesh2_spectrum'][-1:]
 
     if 'ref' in todo:
         imocks = list(range(5))
@@ -216,8 +220,7 @@ if __name__ == '__main__':
         return imocks
 
     if 'randoms' in todo:
-        # Run with 1 process
-        for tracer in ['LRG', 'ELG', 'QSO'][2:]:
+        for tracer in ['LRG', 'ELG', 'QSO'][:1]:
             version = 'v4.80'
             imocks = list_existing_imocks(100, version=version, tracers=[tracer])
             make_merged_random_catalog(imocks=imocks, tracer=tracer, version=version, stats_dir=stats_dir, nran=18, get_catalog_fn=get_holi_catalog_fn)
@@ -229,6 +232,7 @@ if __name__ == '__main__':
 
         for tracer in tracers:
             imocks = list_existing_imocks(100, version=version, tracers=[tracer])
+            imocks = [imock for imock in imocks if imock > 106]
             if any('window' in stat for stat in stats):
                 imocks = [1]
             run_stats(tracer, version=version, weight=weight, stats=stats, stats_dir=stats_dir, get_catalog_fn=get_holi_catalog_fn, imocks=imocks)
@@ -237,14 +241,13 @@ if __name__ == '__main__':
         version = 'v4.80'
         #version = 'v4.00'
         tracers = ['LRG', 'ELG', 'QSO'][2:]
-
         for tracer in tracers:
-            imocks = list_existing_imocks(100, tracers=[tracer])
+            imocks = list_existing_imocks(100, version=version, tracers=[tracer])
             plot_density(imock=imocks, tracer=tracer, version=version, weight='default', get_catalog_fn=get_holi_catalog_fn)
 
     if 'large_scales' in todo:
         version = 'v4.80'
         #version = 'v4.00'
-        tracers = ['LRG', 'ELG', 'QSO'][1:2]
+        tracers = ['LRG', 'ELG', 'QSO'][2:]
         for tracer in tracers:
             fit_large_scales(imock=1, tracer=tracer, version=version, weight='default', stats_dir=stats_dir, plots_dir=plots_dir, get_catalog_fn=get_holi_catalog_fn)

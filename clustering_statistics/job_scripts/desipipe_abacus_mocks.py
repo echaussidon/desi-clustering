@@ -25,8 +25,7 @@ queue.clear(kill=False)
 
 output, error = 'slurm_outputs/abacus_mocks/slurm-%j.out', 'slurm_outputs/abacus_mocks/slurm-%j.err'
 kwargs = {}
-environ = Environment(command='source /global/common/software/desi/users/adematti/cosmodesi_environment.sh new') #, command='module swap pyrecon/main pyrecon/mpi')
-#environ = Environment('nersc-cosmodesi')
+environ = Environment('nersc-cosmodesi')
 tm = TaskManager(queue=queue, environ=environ)
 tm = tm.clone(scheduler=dict(max_workers=10), provider=dict(provider='nersc', time='01:30:00',
                             mpiprocs_per_worker=4, output=output, error=error, stop_after=1, constraint='gpu'))
@@ -87,7 +86,7 @@ if __name__ == '__main__':
 
     stats_dir = Path('/global/cfs/cdirs/desi/mocks/cai/LSS/DA2/mocks/desipipe')
     version = 'abacus-2ndgen-complete'
-    
+
     for tracer in ['BGS_BRIGHT-21.35', 'LRG', 'ELG_LOP', 'QSO'][1:]:
         if False:
             exists, missing = tools.checks_if_exists_and_readable(get_fn=functools.partial(tools.get_catalog_fn, tracer=tracer, region='NGC', version=version), test_if_readable=False, imock=list(range(1001)))[:2]

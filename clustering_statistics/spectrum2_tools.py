@@ -20,37 +20,27 @@ def prepare_jaxpower_particles(*get_data_randoms, mattrs=None, add_data=tuple(),
     Parameters
     ----------
     get_data_randoms : callables
-        Functions that return tuples of (data, randoms, [shifted]) catalogs.
+        Functions that return dict of 'data' (optionally 'randoms', 'shifted') catalogs.
         Each catalog must contain 'POSITION' and 'INDWEIGHT', and optionally 'BITWEIGHT' for bitwise weights and 'TARGETID'
         for randoms IDs to allow process-invariant random split in bispectrum normalization.
     mattrs : dict, optional
-        Mesh attributes to define the :class:`ParticleField` objects. If None, default attributes are used.
+        Mesh attributes ('boxsize', 'meshsize' or 'cellsize', 'boxcenter') to define the :class:`ParticleField` objects. If ``None``, default attributes are used.
     kwargs : dict, optional
         Additional keyword arguments to pass to :class:`ParticleField`.
 
     Returns
     -------
-    all_particles : list of tuples
-        List of tuples (data, randoms, shifted) ParticleField objects for each input catalog.
+    all_particles : list of dictionaries
+        List of dictionaries of :class:`ParticleField`  'data' (optionally 'randoms', 'shifted') objects for each input catalog.
     """
-    from jaxpower.mesh import get_mesh_attrs, ParticleField, make_array_from_process_local_data
+    from jaxpower.mesh import get_mesh_attrs, ParticleField
     backend = 'mpi'
     mpicomm = kwargs['mpicomm']
 
-    all_data, all_randoms, all_shifted = [], [], []
-    for _get_data_randoms in get_data_randoms:
-        # data, randoms (optionally shifted) are tuples (positions, weights)
-        data, randoms, *shifted = _get_data_randoms()
-        all_data.append(data)
-        all_randoms.append(randoms)
-        if shifted:
-            all_shifted.append(shifted[0])
-
-    if all_shifted:
-        assert len(all_shifted) == len(all_data), 'Give as many shifted randoms as data/randoms'
+    all_catalogs = [_get_data_randoms() for _get_data_randoms in get_data_randoms]
 
     # Define the mesh attributes; pass in positions only
-    mattrs = get_mesh_attrs(*[data['POSITION'] for data in all_data + all_shifted + all_randoms], check=True, **(mattrs or {}))
+    mattrs = get_mesh_attrs(*[catalog['POSITION'] for catalogs in all_catalogs for catalog in catalogs.values()], check=True, **(mattrs or {}))
     if jax.process_index() == 0:
         logger.info(f'Using mesh {mattrs}.')
 
@@ -59,66 +49,53 @@ def prepare_jaxpower_particles(*get_data_randoms, mattrs=None, add_data=tuple(),
         return sum(sizes[:mpicomm.rank]) + np.arange(local_size)
 
     all_particles = []
-    for i, (data, randoms) in enumerate(zip(all_data, all_randoms)):
-        _add_data, _add_randoms = {}, {}
-        indweights, bitweights = data['INDWEIGHT'], None
-        if 'BITWEIGHT' in data and 'BITWEIGHT' in add_data:
-            bitweights = _format_bitweights(data['BITWEIGHT'])
-            from cucount.jax import BitwiseWeight
-            iip = BitwiseWeight(weights=bitweights, p_correction_nbits=False)(bitweights)
-            _add_data['BITWEIGHT'] = [indweights] + bitweights  # add individual weight (photometric, spectro systematics) without PIP
-            indweights = indweights * iip  # multiply by IIP to correct fiber assignment at large scales
-        for column in add_data:
-            if column != 'BITWEIGHT':
-                _add_data[column] = data[column]
-        data = ParticleField(data['POSITION'], indweights, attrs=mattrs, exchange=True, backend=backend, **kwargs)
-        #ids = collective_arange(len(randoms['POSITION']))
-        if 'TARGETID' in randoms and 'IDS' in add_randoms:
-            _add_randoms['IDS'] = randoms['TARGETID']
-        for column in add_randoms:
-            if column != 'IDS':
-                _add_randoms[column] = randoms[column]
-        randoms = ParticleField(randoms['POSITION'], randoms['INDWEIGHT'], attrs=mattrs, exchange=True, backend=backend, **kwargs)
-        if backend == 'jax':  # first convert to JAX Array
-            sharding_mesh = mattrs.sharding_mesh
-            for key, value in _add_data.items():
-                _add_data[key] = make_array_from_process_local_data(value, pad=0, sharding_mesh=sharding_mesh)
-            for key, value in _add_randoms.items():
-                _add_randoms[key] = make_array_from_process_local_data(value, pad=0, sharding_mesh=sharding_mesh)
-        for key, value in _add_data.items():
-            if isinstance(value, list): value = [data.exchange_direct(value, pad=0) for value in value]
-            else: value = data.exchange_direct(value, pad=0)
-            data.__dict__[key] = value
-        for key, value in _add_randoms.items():
-            if isinstance(value, list): value = [randoms.exchange_direct(value, pad=0) for value in value]
-            else: value = randoms.exchange_direct(value, pad=0)
-            randoms.__dict__[key] = value
-        if all_shifted:
-            shifted = all_shifted[i]
-            shifted = ParticleField(shifted['POSITION'], shifted['INDWEIGHT'], attrs=mattrs, exchange=True, backend=backend, **kwargs)
-        else:
-            shifted = None
-        all_particles.append((data, randoms, shifted))
+    add = {'data': add_data, 'randoms': add_randoms}
+    for catalogs in all_catalogs:
+        particles = {}
+        for name, catalog in catalogs.items():
+            _add = {}
+            indweights = catalog['INDWEIGHT']
+            if name == 'data':
+                bitweights = None
+                if 'BITWEIGHT' in catalog and 'BITWEIGHT' in add[name]:
+                    bitweights = _format_bitweights(catalog['BITWEIGHT'])
+                    from cucount.jax import BitwiseWeight
+                    iip = BitwiseWeight(weights=bitweights, p_correction_nbits=False)(bitweights)
+                    _add['BITWEIGHT'] = [indweights] + bitweights  # add individual weight (photometric, spectro systematics) without PIP
+                    indweights = indweights * iip  # multiply by IIP to correct fiber assignment at large scales
+                for column in add[name]:
+                    if column != 'BITWEIGHT': _add[column] = catalog[column]
+            elif name == 'randoms':
+                if 'TARGETID' in catalog and 'IDS' in add[name]:
+                    _add['IDS'] = catalog['TARGETID']
+                for column in add[name]:
+                    if column != 'IDS': _add[column] = catalog[column]
+            particle = ParticleField(catalog['POSITION'], indweights, attrs=mattrs, exchange=True, backend=backend, **kwargs)
+            for key, value in _add.items():
+                if isinstance(value, list): value = [particle.exchange_direct(value, pad=0) for value in value]
+                else: value = particle.exchange_direct(value, pad=0)
+                particle.__dict__[key] = value
+            particles[name] = particle
+        all_particles.append(particles)
     if jax.process_index() == 0:
         logger.info(f'All particles on the device')
 
     return all_particles
 
 
-def _get_jaxpower_attrs(*particles):
+def _get_jaxpower_attrs(*all_particles):
     """Return summary attributes from :class:`jaxpower.ParticleField` objects: total weight and size."""
-    mattrs = particles[0][0].attrs
+    mattrs = next(iter(all_particles[0].values())).attrs
     # Creating FKP fields
     attrs = {}
-    for i, (data, randoms, shifted) in enumerate(particles):
-        dparticle = dict(data=data, randoms=randoms, shifted=shifted)
-        for name in dparticle:
-            if dparticle[name] is not None:
+    for particles in all_particles:
+        for name in particles:
+            if particles[name] is not None:
                 if f'wsum_{name}' not in attrs:
                     #attrs[f'size_{name}'] = [[]]  # size is process-dependent
                     attrs[f'wsum_{name}'] = [[]]
-               # attrs[f'size_{name}'][0].append(dparticle[name].size)
-                attrs[f'wsum_{name}'][0].append(dparticle[name].sum())
+               # attrs[f'size_{name}'][0].append(particles[name].size)
+                attrs[f'wsum_{name}'][0].append(particles[name].sum())
     for name in ['boxsize', 'boxcenter', 'meshsize']:
         attrs[name] = mattrs[name]
     return attrs
@@ -133,11 +110,11 @@ def compute_mesh2_spectrum(*get_data_randoms, mattrs=None, cut=None, auw=None,
     Parameters
     ----------
     get_data_randoms : callables
-        Functions that return tuples of (data, randoms, [shifted]) catalogs.
+        Functions that return dict of 'data', 'randoms' (optionally 'shifted') catalogs.
         See :func:`prepare_jaxpower_particles` for details.
     mattrs : dict, optional
-        Mesh attributes to define the :class:`jaxpower.ParticleField` objects.
-        See :func:`prepare_jaxpower_particles` for details.
+        Mesh attributes to define the :class:`jaxpower.ParticleField` objects,
+        'boxsize', 'meshsize' or 'cellsize', 'boxcenter'. If ``None``, default attributes are used.
     cut : bool, optional
         If True, apply a theta-cut of (0, 0.05) in degrees.
     auw : ObservableTree, optional
@@ -184,7 +161,7 @@ def compute_mesh2_spectrum(*get_data_randoms, mattrs=None, cut=None, auw=None,
             # Compute power spectrum for input given multipoles
             attrs = _get_jaxpower_attrs(*all_particles)
             attrs.update(los=los)
-            mattrs = all_particles[0][0].attrs
+            mattrs = all_particles[0]['data'].attrs
 
             # Define the binner
             key = 'bin_mesh2_spectrum_{}'.format('_'.join(map(str, ells)))
@@ -194,11 +171,11 @@ def compute_mesh2_spectrum(*get_data_randoms, mattrs=None, cut=None, auw=None,
             cache.setdefault(key, bin)
 
             # Computing normalization
-            all_fkp = [FKPField(data, randoms) for (data, randoms, _) in all_particles]
+            all_fkp = [FKPField(particles['data'], particles['randoms']) for particles in all_particles]
             norm = compute_fkp2_normalization(*all_fkp, bin=bin, cellsize=10)
 
             # Computing shot noise
-            all_fkp = [FKPField(data, shifted if shifted is not None else randoms) for (data, randoms, shifted) in all_particles]
+            all_fkp = [FKPField(particles['data'], particles['shifted'] if particles.get('shifted', None) is not None else particles['randoms']) for particles in all_particles]
             del all_particles
             num_shotnoise = compute_fkp2_shotnoise(*all_fkp, bin=bin, fields=fields)
 
@@ -251,13 +228,13 @@ def compute_mesh2_spectrum(*get_data_randoms, mattrs=None, cut=None, auw=None,
 
             kw = dict(resampler='tsc', interlacing=3, compensate=True)
             # out='real' to save memory
-            meshes = [fkp.paint(**kw, out='real') for fkp in all_fkp]
+            all_mesh = [fkp.paint(**kw, out='real') for fkp in all_fkp]
             del all_fkp
 
             # JIT the mesh-based spectrum computation; helps with memory footprint
             jitted_compute_mesh2_spectrum = jax.jit(compute_mesh2_spectrum, static_argnames=['los'])
             #jitted_compute_mesh2_spectrum = compute_mesh2_spectrum
-            spectrum = jitted_compute_mesh2_spectrum(*meshes, bin=bin, los=los)
+            spectrum = jitted_compute_mesh2_spectrum(*all_mesh, bin=bin, los=los)
             spectrum = spectrum.clone(norm=norm, num_shotnoise=num_shotnoise)
             spectrum = spectrum.map(lambda pole: pole.clone(attrs=attrs))
             spectrum = spectrum.clone(attrs=attrs)
@@ -284,18 +261,22 @@ def compute_mesh2_spectrum(*get_data_randoms, mattrs=None, cut=None, auw=None,
                 fields = fields + (fields[-1],) * (2 - len(fields))
                 all_particles = tuple(all_particles) + (all_particles[-1],) * (2 - len(all_particles))
 
-                def _get_optimal_weights(all_data):
-                    # all_data is [data1, data2] or [randoms1, randoms2] or [shifted1, shifted2]
-                    if all_data[0] is None:  # shifted is None, yield None
+                def _get_optimal_weights(all_particles):
+                    # all_particles is [data1, data2] or [randoms1, randoms2] or [shifted1, shifted2]
+                    if all_particles[0] is None:  # shifted is None, yield None
                         while True:
-                            yield tuple(None for data in all_data)
-                    for all_weights in optimal_weights(ell, [{'INDWEIGHT': data.weights} | {column: data.__dict__[column] for column in columns_optimal_weights} for data in all_data]):
-                        yield tuple(data.clone(weights=weights) for data, weights in zip(all_data, all_weights))
+                            yield tuple(None for particles in all_particles)
+                    for all_weights in optimal_weights(ell, [{'INDWEIGHT': particles.weights} | {column: particles.__dict__[column] for column in columns_optimal_weights} for particles in all_particles]):
+                        yield tuple(particles.clone(weights=weights) for particles, weights in zip(all_particles, all_weights))
 
                 result_ell = {}
-                for all_data, all_randoms, all_shifted in zip(*[_get_optimal_weights([particles[i] for particles in all_particles]) for i in range(3)]):
-                    # all_data, all_randoms, all_shifted are tuples of ParticleField with optimal weights applied
-                    _all_particles = list(zip(all_data, all_randoms, all_shifted))
+                names = list(all_particles[0].keys())
+                for _all_particles in zip(*[_get_optimal_weights([particles[name] for particles in all_particles]) for name in names]):
+                    # _all_particles is a list [(data1, data2), (randoms1, randoms2), [(shifted1, shifted2)]] of tuples of ParticleField with optimal weights applied
+                    _all_particles = list(zip(*_all_particles))
+                    # _all_particles is now a list of tuples [(data1, randoms1, shifted1), (data2, randoms2, shifted2)] with optimal weights applied
+                    _all_particles = [dict(zip(names, _particles)) for _particles in _all_particles]
+                    # _all_particles is now a list of dictionaries [{'data': data1, 'randoms': randoms1, 'shifted': shifted1}, {'data': data2, 'randoms': randoms2, 'shifted': shifted2}] with optimal weights applied
                     _result = _compute_spectrum_ell(_all_particles, ells=[ell], fields=fields)
                     for key in _result:  # raw, cut, auw
                         result_ell.setdefault(key, [])
@@ -319,7 +300,7 @@ def compute_window_mesh2_spectrum(*get_data_randoms, spectrum: types.Mesh2Spectr
     Parameters
     ----------
     get_data_randoms : callables
-        Functions that return tuples of (data, randoms) catalogs.
+        Functions that return dict of 'randoms' catalogs.
         See :func:`prepare_jaxpower_particles` for details.
     spectrum : Mesh2SpectrumPoles
         Measured 2-point spectrum multipoles.
@@ -332,13 +313,12 @@ def compute_window_mesh2_spectrum(*get_data_randoms, spectrum: types.Mesh2Spectr
 
     Returns
     -------
-    spectrum : WindowMatrix or dict of WindowMatrix
+    window : WindowMatrix or dict of WindowMatrix
         The computed 2-point spectrum window. If `auw` is provided, returns a dict with keys 'raw' and 'auw'.
     """
     # FIXME: data is not used, could be dropped, add auw
     from jaxpower import (create_sharding_mesh, BinMesh2SpectrumPoles, BinMesh2CorrelationPoles, compute_mesh2_correlation, BinParticle2CorrelationPoles, compute_particle2, compute_particle2_shotnoise,
                            compute_smooth2_spectrum_window, get_smooth2_window_bin_attrs, interpolate_window_function, split_particles)
-    from lsstypes import ObservableTree
 
     ells = spectrum.ells
     mattrs = {name: spectrum.attrs[name] for name in ['boxsize', 'boxcenter', 'meshsize']}
@@ -352,7 +332,7 @@ def compute_window_mesh2_spectrum(*get_data_randoms, spectrum: types.Mesh2Spectr
     mattrs = mattrs or {}
     with create_sharding_mesh(meshsize=mattrs.get('meshsize', None)):
         all_particles = prepare_jaxpower_particles(*get_data_randoms, mattrs=mattrs, add_randoms=['IDS'] + columns_optimal_weights)
-        all_randoms = [particles[1] for particles in all_particles]
+        all_randoms = [particles['randoms'] for particles in all_particles]
         del all_particles
 
         stop, step = -np.inf, np.inf
@@ -380,16 +360,16 @@ def compute_window_mesh2_spectrum(*get_data_randoms, spectrum: types.Mesh2Spectr
             list_edges = []
             for scale in [1, 4]:
                 mattrs2 = mattrs.clone(boxsize=scale * mattrs.boxsize)
-                meshes = []
+                all_mesh = []
                 for iran, randoms in enumerate(split_particles(all_randoms + [None] * (2 - len(all_randoms)), seed=seed, fields=fields)):
                     randoms = randoms.exchange(backend='mpi')
                     alpha = pole.attrs['wsum_data'][isum][min(iran, len(all_randoms) - 1)] / randoms.weights.sum()
-                    meshes.append(alpha * randoms.paint(**kw_paint, out='real'))
+                    all_mesh.append(alpha * randoms.paint(**kw_paint, out='real'))
                 edges = np.arange(0., mattrs2.boxsize.min() / 2., mattrs2.cellsize.min())
                 list_edges.append(edges)
                 sbin = BinMesh2CorrelationPoles(mattrs2, edges=edges, **kw_window, basis='bessel')
-                correlation = jitted_compute_mesh2_correlation(meshes, bin=sbin, los=los).clone(norm=[np.mean(norm)] * len(sbin.ells))
-                del meshes
+                correlation = jitted_compute_mesh2_correlation(all_mesh, bin=sbin, los=los).clone(norm=[np.mean(norm)] * len(sbin.ells))
+                del all_mesh
                 correlation = interpolate_window_function(correlation, coords=coords, order=3)
                 correlations.append(correlation)
             masks = [coords < edges[-1] for edges in list_edges[:-1]]
@@ -425,7 +405,7 @@ def compute_window_mesh2_spectrum(*get_data_randoms, spectrum: types.Mesh2Spectr
                 results['cut'] = window.clone(observable=results['raw'].observable, value=window.value() / (norm[..., None] / np.mean(norm)))
             for key, result in results.items():
                 if 'correlation' in key:
-                    results[key] = ObservableTree([result], oells=[ells[0] if len(ells) == 1 else tuple(ells)])
+                    results[key] = types.ObservableTree([result], oells=[ells[0] if len(ells) == 1 else tuple(ells)])
             return results
 
         if optimal_weights is None:
@@ -449,17 +429,17 @@ def compute_window_mesh2_spectrum(*get_data_randoms, spectrum: types.Mesh2Spectr
                 fields = fields + (fields[-1],) * (2 - len(fields))
                 all_randoms = tuple(all_randoms) + (all_randoms[-1],) * (2 - len(all_randoms))
 
-                def _get_optimal_weights(all_data):
-                    # all_data is [data1, data2] or [randoms1, randoms2] or [shifted1, shifted2]
-                    if all_data[0] is None:  # shifted is None, yield None
+                def _get_optimal_weights(all_particles):
+                    # all_particles is [data1, data2] or [randoms1, randoms2] or [shifted1, shifted2]
+                    if all_particles[0] is None:  # shifted is None, yield None
                         while True:
-                            yield tuple(None for data in all_data)
-                    def clone(data, weights):
-                        toret = data.clone(weights=weights)
-                        toret.__dict__.update(data.__dict__)  # to keep IDS
+                            yield tuple(None for particles in all_particles)
+                    def clone(particles, weights):
+                        toret = particles.clone(weights=weights)
+                        toret.__dict__.update(particles.__dict__)  # to keep IDS
                         return toret
-                    for all_weights in optimal_weights(ell, [{'INDWEIGHT': data.weights} | {column: data.__dict__[column] for column in columns_optimal_weights} for data in all_data]):
-                        yield tuple(clone(data, weights=weights) for data, weights in zip(all_data, all_weights))
+                    for all_weights in optimal_weights(ell, [{'INDWEIGHT': particles.weights} | {column: particles.__dict__[column] for column in columns_optimal_weights} for particles in all_particles]):
+                        yield tuple(clone(particles, weights=weights) for particles, weights in zip(all_particles, all_weights))
 
                 result_ell = {}
                 for isum, all_randoms in enumerate(_get_optimal_weights(all_randoms)):
@@ -537,7 +517,7 @@ def run_preliminary_fit_mesh2_spectrum(data: types.Mesh2SpectrumPoles, window: t
     from desilike.likelihoods import ObservablesGaussianLikelihood
     from desilike.profilers import MinuitProfiler
 
-    Theory = {'rept': REPTVelocileptorsTracerPowerSpectrumMultipoles, 'kaiser': KaiserTracerPowerSpectrumMultipoles}[theory] 
+    Theory = {'rept': REPTVelocileptorsTracerPowerSpectrumMultipoles, 'kaiser': KaiserTracerPowerSpectrumMultipoles}[theory]
 
     template = FixedPowerSpectrumTemplate(fiducial='DESI', z=z)
     theory = Theory(template=template)
@@ -571,15 +551,15 @@ def compute_covariance_mesh2_spectrum(*get_data_randoms, theory=None, fields=Non
     Parameters
     ----------
     get_data_randoms : callables
-        Functions that return tuples of (data, randoms) catalogs.
+        Functions that return dict of 'data' and 'randoms' catalogs.
         See :func:`prepare_jaxpower_particles` for details.
     theory : Mesh2SpectrumPoles
         Theory 2-point spectrum multipoles.
     fields : tuple, list, optional
         Field names.
     mattrs : dict, optional
-        Mesh attributes to define the :class:`jaxpower.ParticleField` objects.
-        See :func:`prepare_jaxpower_particles` for details.
+        Mesh attributes to define the :class:`jaxpower.ParticleField` objects,
+        'boxsize', 'meshsize' or 'cellsize', 'boxcenter'. If ``None``, default attributes are used.
 
     Returns
     -------
@@ -593,7 +573,7 @@ def compute_covariance_mesh2_spectrum(*get_data_randoms, theory=None, fields=Non
     results = {}
     with create_sharding_mesh(meshsize=mattrs.get('meshsize', None)):
         all_particles = prepare_jaxpower_particles(*get_data_randoms, mattrs=mattrs, add_randoms=['IDS'])
-        all_fkp = [FKPField(data, randoms) for (data, randoms, _) in all_particles]
+        all_fkp = [FKPField(particles['data'], particles['randoms']) for particles in all_particles]
         mattrs = all_fkp[0].attrs
         kw = dict(edges={'step': mattrs.cellsize.min()}, basis='bessel') if fftlog else dict(edges={})
         kw.update(los='local', fields=fields)
@@ -606,8 +586,9 @@ def compute_covariance_mesh2_spectrum(*get_data_randoms, theory=None, fields=Non
 
     # delta is the maximum abs(k1 - k2) where the covariance will be computed (to speed up calculation)
     covariance = compute_spectrum2_covariance(windows, theory, flags=['smooth'] + (['fftlog'] if fftlog else []))
+    # Update label names
     fields = covariance.observable.fields
-    observable = types.ObservableTree(list(covariance.observable), observables=['spectrum2'] * len(fields), tracers=fields)  
+    observable = types.ObservableTree(list(covariance.observable), observables=['spectrum2'] * len(fields), tracers=fields)
     covariance = covariance.clone(observable=observable)
     results['raw'] = covariance
     return results
@@ -645,7 +626,7 @@ def compute_rotation_mesh2_spectrum(window: types.WindowMatrix, covariance: type
     if theory is not None:
         def interpolate_pole(ref, pole):
             return ref.clone(value=np.interp(ref.coords('k'), pole.coords('k'), pole.value()))
-        
+
         theory = window.theory.map(lambda pole, label: interpolate_pole(pole, theory.get(ells=label['ells'])), input_label=True, level=1)
     covariance = covariance.at.observable.match(observable)
     rotation = WindowRotationSpectrum2(window=window, covariance=covariance, xpivot=0.1)
@@ -657,117 +638,140 @@ def compute_rotation_mesh2_spectrum(window: types.WindowMatrix, covariance: type
     return rotation
 
 
-def compute_box_mesh2_spectrum(get_data, get_shifted=None, ells=(0, 2, 4), los='z', cache=None, **attrs):
-    """
+def compute_box_mesh2_spectrum(*get_data, ells=(0, 2, 4), los='z', cache=None, mattrs=None):
+    r"""
     Compute the 2-point spectrum multipoles for a cubic box using :mod:`jaxpower`.
 
     Parameters
     ----------
-    get_data : callable
-        Function that returns a tuple of (positions, weights) for the data catalog.
-    get_shifted : callable, optional
-        Function that returns a tuple of (positions, weights) for shifted randoms.
-        If None, no shifted randoms are used.
-    ells : tuple of int, optional
-        Multipole moments to compute. Default is (0, 2, 4).
-    los : {'x', 'y', 'z'}, optional
-        Line-of-sight direction. Default is 'z'.
+    get_data : callables
+        Functions that return dict of 'data' (optionally 'shifted') catalogs.
+        See :func:`prepare_jaxpower_particles` for details.
+    mattrs : dict, optional
+        Mesh attributes to define the :class:`jaxpower.ParticleField` objects,
+        'boxsize', 'meshsize' or 'cellsize', 'boxcenter'.
+    ells : list of int, optional
+        List of multipole moments to compute. Default is (0, 2, 4).
+    edges : dict, optional
+        Edges for the binning; array or dictionary with keys 'start' (minimum :math:`k`), 'stop' (maximum :math:`k`), 'step' (:math:`\Delta k`).
+        If ``None``, default step of :math:`0.001 h/\mathrm{Mpc}` is used.
+        See :class:`jaxpower.BinMesh2SpectrumPoles` for details.
+    los : {'x', 'y', 'z', array-like}, optional
+        Line-of-sight direction. If 'x', 'y', 'z' use fixed axes, or provide a 3-vector.
     cache : dict, optional
         Cache to store binning class (can be reused if ``meshsize`` and ``boxsize`` are the same).
         If ``None``, a new cache is created.
-    **attrs : dict
-        Mesh attributes (boxsize, cellsize, etc.) to pass to :func:`jaxpower.get_mesh_attrs`.
 
     Returns
     -------
     spectrum : Mesh2SpectrumPoles
         The computed 2-point spectrum multipoles.
     """
-    import jax
-    from jaxpower import (ParticleField, FKPField, compute_box2_normalization, compute_fkp2_shotnoise, BinMesh2SpectrumPoles, get_mesh_attrs, compute_mesh2_spectrum)
-    mattrs = get_mesh_attrs(boxcenter=0., **attrs)
-    data = ParticleField(*get_data(), attrs=mattrs, exchange=True, backend='jax')
-    if cache is None: cache = {}
-    bin = cache.get('bin_mesh2_spectrum', None)
-    if bin is None: bin = BinMesh2SpectrumPoles(mattrs, edges={'step': 0.001}, ells=ells)
-    cache.setdefault('bin_mesh2_spectrum', bin)
-    norm = compute_box2_normalization(data, bin=bin)
-    wsum_data1 = data.sum()
-    if get_shifted is not None:
-        data = FKPField(data, ParticleField(*get_shifted(), attrs=mattrs, exchange=True, backend='jax'))
-    num_shotnoise = compute_fkp2_shotnoise(data, bin=bin)
-    jax.block_until_ready((norm, num_shotnoise))
-    if jax.process_index() == 0:
-        logger.info('Normalization and shotnoise computation finished')
-    mesh = data.paint(resampler='tsc', interlacing=3, compensate=True, out='real')
-    mesh = mesh - mesh.mean()
-    del data
-    jitted_compute_mesh2_spectrum = jax.jit(compute_mesh2_spectrum, static_argnames=['los'], donate_argnums=[0])
-    spectrum = jitted_compute_mesh2_spectrum(mesh, bin=bin, los=los).clone(norm=norm, num_shotnoise=num_shotnoise)
-    mattrs = {name: mattrs[name] for name in ['boxsize', 'boxcenter', 'meshsize']}
-    spectrum = spectrum.clone(attrs=dict(los=los, wsum_data1=wsum_data1, **mattrs))
-    jax.block_until_ready(spectrum)
-    if jax.process_index() == 0:
-        logger.info('Mesh-based computation finished')
-    return spectrum
+    from jaxpower import (create_sharding_mesh, FKPField, compute_fkp2_shotnoise, compute_box2_normalization, BinMesh2SpectrumPoles, compute_mesh2_spectrum, compute_fkp2_shotnoise)
+
+    mattrs = mattrs or {}
+    with create_sharding_mesh(meshsize=mattrs.get('meshsize', None)):
+        all_particles = prepare_jaxpower_particles(*get_data, mattrs=mattrs)
+        if cache is None: cache = {}
+        if edges is None: edges = {'step': 0.001}
+        attrs = _get_jaxpower_attrs(*all_particles)
+        attrs.update(los=los)
+        mattrs = all_particles[0]['data'].attrs
+
+        # Define the binner
+        key = 'bin_mesh2_spectrum_{}'.format('_'.join(map(str, ells)))
+        bin = cache.get(key, None)
+        if bin is None or not np.all(bin.mattrs.meshsize == mattrs.meshsize) or not np.allclose(bin.mattrs.boxsize, mattrs.boxsize):
+            bin = BinMesh2SpectrumPoles(mattrs, edges=edges, ells=ells)
+        cache.setdefault(key, bin)
+
+        # Computing normalization
+        all_data = [particles['data'] for particles in all_particles]
+        norm = compute_box2_normalization(*all_data, bin=bin)
+
+        # Computing shot noise
+        all_fkp = [FKPField(particles['data'], particles['shifted']) if particles.get('shifted', None) is not None else particles['data'] for particles in all_particles]
+        del all_particles
+        num_shotnoise = compute_fkp2_shotnoise(*all_fkp, bin=bin, fields=None)
+
+        kw = dict(resampler='tsc', interlacing=3, compensate=True)
+        # out='real' to save memory
+        all_mesh = []
+        for fkp in all_fkp:
+            mesh = fkp.paint(**kw, out='real')
+            all_mesh.append(mesh - mesh.mean())
+        del all_fkp
+        # JIT the mesh-based spectrum computation; helps with memory footprint
+        jitted_compute_mesh2_spectrum = jax.jit(compute_mesh2_spectrum, static_argnames=['los'])
+        #jitted_compute_mesh2_spectrum = compute_mesh2_spectrum
+        spectrum = jitted_compute_mesh2_spectrum(*all_mesh, bin=bin, los=los)
+        spectrum = spectrum.clone(norm=norm, num_shotnoise=num_shotnoise)
+        spectrum = spectrum.map(lambda pole: pole.clone(attrs=attrs))
+        spectrum = spectrum.clone(attrs=attrs)
+        jax.block_until_ready(spectrum)
+        if jax.process_index() == 0:
+            logger.info('Mesh-based computation finished')
+        return
 
 
-def compute_box_mesh2_cross_spectrum(get_data, get_data2, get_shifted=None, get_shifted2=None, ells=(0, 2, 4), los='z', cache=None, **attrs):
-    """
-    Compute the 2-point cross-spectrum multipoles between two fields in a cubic box using :mod:`jaxpower`.
+def compute_window_box_mesh2_spectrum(spectrum: types.Mesh2SpectrumPoles, zsnap: float=None):
+    r"""
+    Compute the 2-point spectrum window for a box (i.e., binning window) with :mod:`jaxpower`.
 
     Parameters
     ----------
-    get_data : callable
-        Function that returns a tuple of (positions, weights) for the first data catalog.
-    get_data2 : callable
-        Function that returns a tuple of (positions, weights) for the second data catalog.
-    ells : tuple of int, optional
-        Multipole moments to compute. Default is (0, 2, 4).
-    los : {'x', 'y', 'z'}, optional
-        Line-of-sight direction. Default is 'z'.
-    cache : dict, optional
-        Cache to store binning class (can be reused if ``meshsize`` and ``boxsize`` are the same).
-        If ``None``, a new cache is created.
-    **attrs : dict
-        Mesh attributes (boxsize, cellsize, etc.) to pass to :func:`jaxpower.get_mesh_attrs`.
+    spectrum : Mesh2SpectrumPoles
+        Measured 2-point spectrum multipoles.
 
     Returns
     -------
-    spectrum : Mesh2SpectrumPoles
-        The computed 2-point cross-spectrum multipoles.
+    window : WindowMatrix
+        The computed 2-point spectrum window.
     """
-    import jax
-    from jaxpower import (ParticleField, FKPField, compute_box2_normalization, BinMesh2SpectrumPoles, get_mesh_attrs, compute_mesh2_spectrum)
-    mattrs = get_mesh_attrs(boxcenter=0., **attrs)
-    if cache is None: cache = {}
-    bin = cache.get('bin_mesh2_spectrum', None)
-    if bin is None: bin = BinMesh2SpectrumPoles(mattrs, edges={'step': 0.001}, ells=ells)
-    cache.setdefault('bin_mesh2_spectrum', bin)
-    data = ParticleField(*get_data(), attrs=mattrs, exchange=True, backend='jax')
-    kw = {}
-    kw['wsum_data1'] = data.sum()
-    if get_shifted is not None:
-        data = FKPField(data, ParticleField(*get_shifted(), attrs=mattrs, exchange=True, backend='jax'))
-    data2 = ParticleField(*get_data2(), attrs=mattrs, exchange=True, backend='jax')
-    kw['wsum_data2'] = data2.sum()
-    if get_shifted2 is not None:
-        data2 = FKPField(data2, ParticleField(*get_shifted2(), attrs=mattrs, exchange=True, backend='jax'))
-    norm = compute_box2_normalization(data, data2, bin=bin)
-    jax.block_until_ready(norm)
-    if jax.process_index() == 0:
-        logger.info('Normalization computation finished')
-    mesh = data.paint(resampler='tsc', interlacing=3, compensate=True, out='real')
-    mesh = mesh - mesh.mean()
-    del data
-    mesh2 = data2.paint(resampler='tsc', interlacing=3, compensate=True, out='real')
-    mesh2 = mesh2 - mesh2.mean()
-    del data2
-    jitted_compute_mesh2_spectrum = jax.jit(compute_mesh2_spectrum, static_argnames=['los'], donate_argnums=[0])
-    spectrum = jitted_compute_mesh2_spectrum(mesh, mesh2, bin=bin, los=los).clone(norm=norm)
-    mattrs = {name: mattrs[name] for name in ['boxsize', 'boxcenter', 'meshsize']}
-    spectrum = spectrum.clone(attrs=dict(los=los, **kw, **mattrs))
-    jax.block_until_ready(spectrum)
-    if jax.process_index() == 0:
-        logger.info('Mesh-based computation finished')
-    return spectrum
+    from jaxpower import create_sharding_mesh, MeshAttrs, BinMesh2SpectrumPoles, compute_mesh2_spectrum_window
+
+    mattrs = MeshAttrs(**{name: spectrum.attrs[name] for name in ['boxsize', 'boxcenter', 'meshsize']})
+    los = spectrum.attrs['los']
+    ells = spectrum.ells
+    pole = spectrum.get(0)
+    with create_sharding_mesh(meshsize=mattrs.get('meshsize', None)):
+        bin = BinMesh2SpectrumPoles(mattrs, edges=pole.edges('k'), ells=ells)
+        #edgesin = np.linspace(bin.edges.min(), bin.edges.max(), 2 * (len(bin.edges) - 1))
+        edgesin = bin.edges
+        window = compute_mesh2_spectrum_window(mattrs, edgesin=edgesin, ellsin=ells, los=los, bin=bin)
+        observable = window.observable
+        if zsnap is not None:
+            observable = observable.map(lambda pole: pole.clone(attrs=pole.attrs | dict(zeff=zsnap, zsnap=zsnap)))
+        window = window.clone(observable=observable)
+    return window
+
+
+def compute_covariance_box_mesh2_spectrum(theory: types.Mesh2SpectrumPoles=None, mattrs=None):
+    r"""
+    Compute the 2-point spectrum covariance for a box with :mod:`jaxpower`.
+
+    Parameters
+    ----------
+    theory : Mesh2SpectrumPoles, optional
+        Theory spectrum used together with `spectrum` when setting priors.
+    mattrs : dict, optional
+        Mesh attributes to define the :class:`jaxpower.ParticleField` objects,
+        'boxsize', 'meshsize' or 'cellsize', 'boxcenter'. If ``None``, default attributes are used.
+
+    Returns
+    -------
+    covarance : CovarianceMatrix
+        The computed 2-point spectrum covariance.
+    """
+    from jaxpower import create_sharding_mesh, MeshAttrs, compute_spectrum2_covariance
+    # Add shotnoise to theory
+    theory_sn = theory.map(lambda pole: pole.clone(num_shotnoise=pole.values('num_shotnoise') * 0.), level=2)
+    with create_sharding_mesh(meshsize=mattrs.get('meshsize', None)):
+        mattrs = MeshAttrs(**mattrs)
+        covariance = compute_spectrum2_covariance(mattrs, theory_sn)  # Gaussian, diagonal covariance
+    
+        # Update label names
+        fields = covariance.observable.fields
+        observable = types.ObservableTree(list(covariance.observable), observables=['spectrum2'] * len(fields), tracers=fields)
+        covariance = covariance.clone(observable=observable)
+    return covariance
