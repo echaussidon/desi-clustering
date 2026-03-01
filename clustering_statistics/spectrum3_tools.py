@@ -121,7 +121,7 @@ def _get_window_edges(mattrs, scales: tuple=(1, 4)):
     return edges
 
 
-def compute_window_mesh3_spectrum(*get_data_randoms, spectrum, ibatch: tuple=None, computed_batches: list=None, buffer_size=10):
+def compute_window_mesh3_spectrum(*get_data_randoms, spectrum, ibatch: tuple=None, computed_batches: list=None, buffer_size=0):
     r"""
     Compute the 3-point spectrum window with :mod:`jaxpower`.
 
@@ -174,11 +174,12 @@ def compute_window_mesh3_spectrum(*get_data_randoms, spectrum, ibatch: tuple=Non
         fields = list(range(len(all_randoms)))
         fields += [fields[-1]] * (3 - len(all_randoms))
         seed = [(42, randoms.__dict__['IDS']) for randoms in all_randoms]
-        zeff = compute_fkp_effective_redshift(*all_randoms, order=3, split=seed)
+        zeff, norm_zeff = compute_fkp_effective_redshift(*all_randoms, order=3, split=seed, return_fraction=True)
 
         correlations = []
         kw, ellsin = get_smooth3_window_bin_attrs(ells, ellsin=2, fields=fields, return_ellsin=True)
         kw['ells'] = [ell for ell in kw['ells'] if all(ell <= 2 for ell in ell)]  # let's remove some terms...
+        kw['ells'] = kw['ells'][:1]  # let's just keep the first term (0, 0, 0) for now
         jitted_compute_mesh3_correlation = jax.jit(compute_mesh3_correlation, static_argnames=['los'], donate_argnums=[0])
         #jitted_compute_mesh3_correlation = compute_mesh3_correlation
 
@@ -192,17 +193,11 @@ def compute_window_mesh3_spectrum(*get_data_randoms, spectrum, ibatch: tuple=Non
             kw['ells'] = ells[start:stop]
         if ells and not bool(computed_batches):
             # multigrid calculation
+            kw_paint = dict(resampler='tsc', interlacing=3, compensate=True)
             for scale, edges in zip(list_scales, list_edges):
                 if jax.process_index() == 0:
                     logger.info(f'Processing scale x{scale:.0f}')
                 mattrs2 = mattrs.clone(boxsize=scale * mattrs.boxsize)
-                kw_paint = dict(resampler='tsc', interlacing=3, compensate=True)
-                #kw['ells'] = kw['ells'][-1:]
-                #kw['ells'] = [(2, 0, 2)]
-                #kw['ells'] = [(0, 0, 0)]
-                #edges = edges[:5]
-                buffer_size = len(edges) - 1
-                #buffer_size = 0
                 sbin = BinMesh3CorrelationPoles(mattrs2, edges=edges, **kw, buffer_size=buffer_size)  # kcut=(0., mattrs2.knyq.min()))
                 meshes = []
                 for iran, randoms in enumerate(split_particles(all_randoms + [None] * (3 - len(all_randoms)),
@@ -211,11 +206,11 @@ def compute_window_mesh3_spectrum(*get_data_randoms, spectrum, ibatch: tuple=Non
                     alpha = pole.attrs['wsum_data'][0][min(iran, len(all_randoms) - 1)] / randoms.weights.sum()
                     meshes.append(alpha * randoms.paint(**kw_paint, out='real'))
                 t0 = time.time()
-                correlation = jitted_compute_mesh3_correlation(meshes, bin=sbin, los=los).clone(norm=[np.mean(norm)] * len(sbin.ells))
+                correlation = jitted_compute_mesh3_correlation(meshes, bin=sbin, los=los)
+                correlation = correlation.clone(norm=[np.mean(norm)] * len(sbin.ells))
                 jax.block_until_ready(correlation)
                 if jax.process_index() == 0:
                     logger.info(f"Computed windows {kw['ells']}, scale {scale}, in {time.time() - t0:.2f} s.")
-                    #correlation.write(f'_tmp/window_mesh3_correlation_raw_{scale}.h5')
                 correlation = interpolate_window_function(correlation.unravel(), coords=coords, order=3)
                 correlations.append(correlation)
 
@@ -245,12 +240,12 @@ def compute_window_mesh3_spectrum(*get_data_randoms, spectrum, ibatch: tuple=Non
             if jax.process_index() == 0:
                 logger.info('Building window matrix.')
             window = compute_smooth3_spectrum_window(correlation, edgesin=edgesin, ellsin=ellsin, bin=bin, flags=('fftlog',), batch_size=4)
-            observable = window.observable.map(lambda pole, label: pole.clone(norm=spectrum.get(**label).values('norm'), attrs=pole.attrs | dict(zeff=zeff)), input_label=True)
+            observable = window.observable
+            observable = observable.map(lambda pole, label: pole.clone(norm=spectrum.get(**label).values('norm'), attrs=pole.attrs | dict(zeff=zeff / norm_zeff, norm_zeff=norm_zeff)), input_label=True)
             window = window.clone(observable=observable, value=window.value() / (norm[..., None] / np.mean(norm)))  # just in case norm is k-dependent
             results['raw'] = window
     return results
-
-
+    
 
 def compute_box_mesh3_spectrum(*get_data, mattrs=None,
                                 basis='sugiyama-diagonal', ells=[(0, 0, 0), (2, 0, 2)], edges=None, los='z',

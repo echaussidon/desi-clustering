@@ -218,8 +218,10 @@ def compute_stats_from_options(stats, analysis='full_shape', cache=None,
                     return toret
 
                 spectrum_fn = window_options.pop('spectrum', None)
+                fn_window_options = window_options | dict(auw=False, cut=False)
                 if spectrum_fn is None:
                     spectrum_stat = stat.replace('window_', '')
+                    fn_window_options = options[spectrum_stat] | fn_window_options
                     spectrum_fn = get_stats_fn(kind=spectrum_stat, catalog=fn_catalog_options, **(options[spectrum_stat] | dict(auw=False, cut=False)))
                 spectrum = types.read(spectrum_fn)
 
@@ -231,16 +233,19 @@ def compute_stats_from_options(stats, analysis='full_shape', cache=None,
 
                 nbatch = window_options.get('computed_batches', False)
                 if nbatch:
-                    fns = [get_stats_fn(kind=key, catalog=fn_catalog_options, **(window_options | dict(auw=False, cut=False, extra=get_extra(ibatch, nbatch)))) for ibatch in range(nbatch)]
+                    fns = [get_stats_fn(kind=f'{stat.replace("_spectrum", "")}_correlation_raw', catalog=fn_catalog_options, **(fn_window_options | dict(extra=get_extra(ibatch, nbatch)))) for ibatch in range(nbatch)]
                     window_options['computed_batches'] = [types.read(fn) for fn in fns]
+                window_options.pop('basis', None)
                 window = func(*[functools.partial(get_data, tracer) for tracer in tracers], spectrum=spectrum, **window_options)
-                for key, kw in _expand_cut_auw_options(stat, window_options).items():
-                    fn = get_stats_fn(kind=stat, catalog=fn_catalog_options, **kw)
+                for key, kw in _expand_cut_auw_options(stat, fn_window_options).items():
                     if key in window:
+                        basis = getattr(next(iter(window[key].observable)), 'basis', None)
+                        if basis is not None: kw['basis'] = basis
+                        fn = get_stats_fn(kind=stat, catalog=fn_catalog_options, **kw)
                         tools.write_stats(fn, window[key])
                 for key in window:
                     if 'correlation' in key:  # window functions
-                        fn = get_stats_fn(kind=key, catalog=fn_catalog_options, **(window_options | dict(auw=False, cut=False, extra=extra)))
+                        fn = get_stats_fn(kind=key, catalog=fn_catalog_options, **(fn_window_options | dict(extra=extra)))
                         tools.write_stats(fn, window[key])
 
         # Covariance matrix

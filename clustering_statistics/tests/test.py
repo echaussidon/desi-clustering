@@ -115,7 +115,7 @@ def test_window(stats=['mesh2_spectrum']):
     from jaxpower import get_mesh_attrs
     from clustering_statistics.tools import propose_fiducial
     from clustering_statistics.spectrum3_tools import _get_window_edges
-    mattrs = get_mesh_attrs(boxcenter=0., **propose_fiducial(kind='mesh2_spectrum', tracer='QSO')['mattrs'])
+    #mattrs = get_mesh_attrs(boxcenter=0., **propose_fiducial(kind='mesh2_spectrum', tracer='QSO')['mattrs'])
     #for edges in _get_window_edges(mattrs, scales=(1, 4)):
     #    print(edges, len(edges))
     stats_dir = Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks'
@@ -134,6 +134,20 @@ def test_window(stats=['mesh2_spectrum']):
                 catalog_options = dict(version='holi-v1-altmtl', tracer=tracer, zrange=zranges, region=region, imock=451, nran=1)
                 #catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default-FKP', nran=1)
                 compute_stats_from_options([stat, f'window_{stat}'], catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), mesh2_spectrum={}, window_mesh2_spectrum={'cut': True}, analysis='png_local')
+
+
+def test_window3(stats=['mesh3_spectrum']):
+    from jaxpower import get_mesh_attrs
+    from clustering_statistics.tools import propose_fiducial
+    from clustering_statistics.spectrum3_tools import _get_window_edges
+    stats_dir = Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks'
+    for stat in stats:
+        for tracer in ['QSO']:
+            zranges = [(0.8, 2.1)]
+            for region in ['NGC', 'SGC'][:1]:
+                catalog_options = dict(version='holi-v1-altmtl', tracer=tracer, zrange=zranges, region=region, imock=451, nran=1)
+                #catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default-FKP', nran=1)
+                compute_stats_from_options([stat, f'window_{stat}'][1:], catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir))
 
 
 def test_covariance():
@@ -186,19 +200,22 @@ def test_norm():
 
 if __name__ == '__main__':
 
-    os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.8'
+    os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.9'
     from jax import config
     config.update('jax_enable_x64', True)
+    config.update('jax_num_cpu_devices', 4)
+    config.update('jax_platform_name', 'cpu')
+
     jax.distributed.initialize()
     setup_logging()
 
     #test_covariance()
     #test_rotation()
-    #test_window()
+    test_window3()
     #test_stats_fn()
     #test_auw(stats=['mesh2_spectrum'])
     #test_bitwise(stats=['mesh2_spectrum'])
-    test_expand_randoms()
+    #test_expand_randoms()
     #test_optimal_weights()
     #test_cross()
     #test_window()

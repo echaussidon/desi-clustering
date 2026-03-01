@@ -54,6 +54,7 @@ def run_stats(tracer='LRG', zranges=None, version='holi-v4.80', weight='default-
             regions = ['NGC', 'SGC'][:1]
             for region in regions:
                 options = dict(catalog=dict(version=version, tracer=tracer, zrange=zranges, region=region, weight=weight, imock=imock), mesh2_spectrum={'mattrs': {'boxsize': 10000., 'meshsize': 750}}, **kw)
+                #options = dict(catalog=dict(version=version, tracer=tracer, zrange=zranges, region=region, weight=weight, imock=imock), mesh2_spectrum={}, **kw)
                 options = fill_fiducial_options(options, analysis='full_shape_protected' if 'data' in version else 'full_shape')
                 if 'uchuu-hf-complete' in version:
                     for tracer in options['catalog']:
@@ -179,12 +180,12 @@ def fit_large_scales(imock=0, tracer='LRG', zranges=None, version='v4.80', weigh
 
 if __name__ == '__main__':
 
-    #todo = ['test']
+    todo = ['test']
     #todo = ['density']
     #todo = ['randoms']
-    todo = ['large_scales']
+    #todo = ['large_scales']
     weight = 'default'
-    stats = ['mesh2_spectrum', 'mesh3_spectrum_sugiyama', 'mesh3_spectrum_scoccimarro', 'window_mesh2_spectrum'][-1:]
+    stats = ['mesh2_spectrum', 'mesh3_spectrum_sugiyama', 'mesh3_spectrum_scoccimarro', 'window_mesh2_spectrum'][:1]
 
     if 'ref' in todo:
         imocks = list(range(5))
@@ -237,7 +238,8 @@ if __name__ == '__main__':
         tracers = ['LRG', 'ELG', 'QSO'][:1]
 
         for tracer in tracers:
-            imocks = list_existing_imocks(25, version=version, tracers=[tracer])
+            imocks = list_existing_imocks(100, version=version, tracers=[tracer])
+            imocks = [imock for imock in imocks if imock > 25]
             zranges = [(0.8, 1.1)]
             if any('window' in stat for stat in stats):
                 imocks = [1]
