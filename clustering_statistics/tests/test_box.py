@@ -95,9 +95,9 @@ if __name__ == '__main__':
     setup_logging()
 
     #test_stats_fn()
-    #test_spectrum()
+    test_spectrum()
     #test_recon()
     #test_cross()
     #test_window()
-    test_covariance()
+    #test_covariance()
     #jax.distributed.shutdown()

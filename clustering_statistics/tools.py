@@ -756,6 +756,19 @@ def get_catalog_fn(version=None, cat_dir=None, kind='data', tracer='LRG',
         return _find_extension(cat_dir / f'{tracer}_{region}_{nran:d}_clustering.ran', ext)
 
 
+def float2str(value, prec_min=1, prec_max=10):
+    """
+    Return the shortest fixed-point decimal representation of `value`
+    between prec_min and prec_max decimals that round-trips to the value.
+    """
+    value = float(value)
+    for p in range(prec_min, prec_max + 1):
+        s = f"{value:.{p}f}"
+        if np.isclose(float(s), value):
+            break
+    return s
+
+
 def get_stats_fn(stats_dir=Path(os.getenv('SCRATCH', '.')) / 'measurements', kind='mesh2_spectrum', auw=None, cut=None, extra='', ext='h5', **kwargs):
     """
     Return measurement filename for given parameters.
@@ -824,7 +837,7 @@ def get_stats_fn(stats_dir=Path(os.getenv('SCRATCH', '.')) / 'measurements', kin
     version = join_if_not_none(str, 'version')
     if version: stats_dir = stats_dir / version
     tracer = join_tracers(check_is_not_none('tracer'))
-    zrange = join_if_not_none(lambda zrange: f'z{zrange[0]:.1f}-{zrange[1]:.1f}', 'zrange')
+    zrange = join_if_not_none(lambda zrange: f'z{float2str(zrange[0], 1, 3)}-{float2str(zrange[1], 1, 3)}', 'zrange')
     zrange = f'_{zrange}' if zrange else ''
     region = join_tracers(check_is_not_none('region'))
     weight = join_tracers(check_is_not_none('weight'))

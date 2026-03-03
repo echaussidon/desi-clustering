@@ -5,7 +5,7 @@ import numpy as np
 from mpi4py import MPI
 
 from .tools import (default_mpicomm, Catalog, join_tracers, _unzip_catalog_options, _merge_catalog_options, _zip_catalog_options,
-_read_catalog, get_simple_tracer, _merge_options, _make_tuple, desi_dir, write_stats, setup_logging)
+_read_catalog, get_simple_tracer, _merge_options, _make_tuple, desi_dir, write_stats, float2str, setup_logging)
 
 
 def get_zrange_from_snap(tracer, zsnap=None, version='abacus-2ndgen'):
@@ -380,7 +380,7 @@ def get_box_stats_fn(stats_dir=Path(os.getenv('SCRATCH', '.')) / 'measurements',
     tracer = join_tracers(check_is_not_none('tracer'))
     cosmo = join_if_not_none(str, 'cosmo')
     cosmo = f'_c{cosmo}' if cosmo else ''
-    zsnap = join_tracers([f'{z:.3f}' for z in check_is_not_none('zsnap')])
+    zsnap = join_tracers([float2str(z, 3, 3) for z in check_is_not_none('zsnap')])
     hod = join_if_not_none(str, 'hod')
     hod = f'_hod-{hod}' if hod else ''
     los = join_tracers(check_is_not_none('los'))
