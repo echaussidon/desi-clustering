@@ -1219,7 +1219,7 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
                 if mpicomm.rank == 0:
                     logger.info(f'Reshuffling randoms completed in {time() - t0:2.1f} s')
             columns = ['RA', 'DEC', 'Z', 'WEIGHT', 'WEIGHT_COMP', 'WEIGHT_FKP', 'WEIGHT_SYS', 'WEIGHT_ZFAIL', 'BITWEIGHTS', 'FRAC_TLOBS_TILES', 'NTILE', 'NX', 'TARGETID']
-            if 'wsys' in weight_type: columns.append(weight_type.split('wsys_')[-1])
+            if 'wsys' in weight_type and not 'noimsys' in weight_type: columns.append(weight_type.split('wsys_')[-1])
             columns = [column for column in columns if column in catalog.columns()]
             catalog = catalog[columns]
 
@@ -1260,7 +1260,7 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
         if 'comp' in weight_type:
             individual_weight *= get_binned_weight(catalog, binned_weight['completeness'])
 
-        if 'wsys' in weight_type:
+        if 'wsys' in weight_type and not 'noimsys' in weight_type:
             new_wsys = weight_type.split('wsys_')[-1]
             #logger.info(f'Use a different wsys weight: {new_wsys}')
             individual_weight *= catalog[new_wsys] / catalog['WEIGHT_SYS'] 
