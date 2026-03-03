@@ -5,6 +5,7 @@ srun -n 4 python test.py
 """
 import os
 import sys
+import copy
 import functools
 from pathlib import Path
 
@@ -44,6 +45,37 @@ def test_auw(stats=['mesh2_spectrum']):
             catalog_options = dict(version='holi-v1-altmtl', tracer=tracer, zrange=zranges, region=region, imock=451)
             #catalog_options = dict(version='data-dr1-v1.5', tracer=tracer, zrange=zranges, region=region, weight='default-FKP', nran=1)
             compute_stats_from_options(stats, catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), mesh2_spectrum={'cut': True, 'auw': True}, particle2_correlation={'auw': True})
+
+
+def test_blinding(stats=['mesh2_spectrum']):
+    stats_dir = Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks'
+    for tracer in ['LRG']:
+        zrange = tools.propose_fiducial('zranges', tracer)[0]
+        for region in ['NGC', 'SGC'][:1]:
+            options = dict(catalog=dict(version='data-dr2-v2', tracer=tracer, zrange=zrange, region=region, nran=2))
+            fiducial_options = tools.fill_fiducial_options(options)
+            compute_stats_from_options(stats, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), **fiducial_options)
+            options2 = copy.deepcopy(options)
+            options2['catalog'].update(version=None, cat_dir=tools.desi_dir / f'survey/catalogs/DA2/LSS/loa-v1/LSScats/v2/nonKP', ext=None)
+            fiducial_options = tools.fill_fiducial_options(options2)
+            compute_stats_from_options(stats, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), **fiducial_options)
+            analysis = 'full_shape_protected'
+            fiducial_options = tools.fill_fiducial_options(options, analysis=analysis)
+            compute_stats_from_options(stats, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir / 'protected'), analysis=analysis, **fiducial_options)
+            for stat in stats:
+                catalog = fiducial_options['catalog']
+                blinded_fn = tools.get_stats_fn(kind=stat, stats_dir=stats_dir, catalog=catalog)
+                blinded_fn2 = tools.get_stats_fn(kind=stat, stats_dir=stats_dir, catalog=catalog, version=None)
+                assert blinded_fn2 != blinded_fn
+                protected_fn = tools.get_stats_fn(kind=stat, stats_dir=stats_dir / 'protected', catalog=catalog)
+                blinded = types.read(blinded_fn)
+                assert len(blinded.ells) > 1
+                blinded2 = types.read(blinded_fn2)
+                assert np.allclose(blinded2.value(), blinded.value())
+                protected = types.read(protected_fn)
+                assert len(protected.ells) == 1
+                blinded = blinded.match(protected)
+                assert not np.allclose(protected.value(), blinded.value())
 
 
 def test_bitwise(stats=['mesh2_spectrum']):
@@ -203,15 +235,17 @@ if __name__ == '__main__':
     os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.9'
     from jax import config
     config.update('jax_enable_x64', True)
-    config.update('jax_num_cpu_devices', 4)
-    config.update('jax_platform_name', 'cpu')
+    #config.update('jax_num_cpu_devices', 4)
+    #config.update('jax_platform_name', 'cpu')
 
     jax.distributed.initialize()
     setup_logging()
 
+    test_blinding()
+
     #test_covariance()
     #test_rotation()
-    test_window3()
+    #test_window3()
     #test_stats_fn()
     #test_auw(stats=['mesh2_spectrum'])
     #test_bitwise(stats=['mesh2_spectrum'])

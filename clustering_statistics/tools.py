@@ -53,6 +53,7 @@ def join_tracers(tracers):
         return 'x'.join(tracers)
     return tracers
 
+
 def get_simple_tracer(tracer):
     """Given input tracer, return simple tracer name; e.g. 'ELG_LOPnotqso' would result in 'ELG'."""
     if 'BGS' in tracer:
@@ -449,6 +450,44 @@ def propose_fiducial(kind, tracer, zrange=None, analysis='full_shape'):
     return propose_fiducial[kind]
 
 
+def check_if_stats_requires_blinding(analysis='full_shape', **catalog_options):
+    """Check if arguments passed as input to :func:`get_catalog_fn` require data vector blinding."""
+    version = catalog_options.get('version', '')
+    if 'protected' in analysis:
+        return False
+    if version is not None and version.startswith('data-dr2') and 'blinded' not in version:
+        return True
+    cat_dir = catalog_options.get('cat_dir', '')
+    if 'nonKP' in str(cat_dir):
+        return True
+    return False
+
+
+def apply_blinding(data, tracer, zrange):
+    """Apply data-vector-level blinding."""
+    labels = {('BGS', (0.1, 0.4)): 'BGS_z0',
+             ('LRG', (0.4, 0.6)): 'LRG_z0',
+             ('LRG', (0.6, 0.8)): 'LRG_z1',
+             ('LRG', (0.8, 1.1)): 'LRG_z2',
+             ('ELG', (0.8, 1.1)): 'ELG_z0',
+             ('ELG', (1.1, 1.6)): 'ELG_z1',
+             ('QSO', (0.8, 2.1)): 'QSO_z0'}
+    stracer = get_simple_tracer(tracer)
+    zmean = np.mean(zrange)
+    label = None
+    for (_tracer, _zrange), _label in labels.items():
+        if _tracer == stracer and _zrange[0] <= zmean <= _zrange[1]:
+            label = _label
+            break
+    if label is None:
+        raise ValueError(f'Could not find blinding for {tracer} in {zrange}. Please open a github issue.')
+    from desiblind import TracerPowerSpectrumMultipolesBlinder
+    if isinstance(data, types.Mesh2SpectrumPoles):
+        return TracerPowerSpectrumMultipolesBlinder.apply_blinding(name=label, data=data)
+    else:
+        raise NotImplementedError
+
+
 def _unzip_catalog_options(catalog):
     """From a catalog dictionary with nran, zrange, ..., tracer, return {tracer: {nran:..., zrange: ...}}"""
     if 'tracer' in catalog:
@@ -569,7 +608,7 @@ def _merge_options(options1, options2):
 
 
 def _find_extension(filename, ext):
-    """Try to guess file extension."""
+    """Try to guess file extension if ``ext`` is ``None``."""
     if ext is None:
         for ext in ['h5', 'fits']:
             fn = _find_extension(filename, ext)
@@ -604,6 +643,7 @@ def get_catalog_fn(version=None, cat_dir=None, kind='data', tracer='LRG',
         Mock index (for mock catalogs). Default is 0.
     ext : str
         File extension. Default is 'h5'.
+        Pass ``None`` to try to guess it.
 
     Returns
     -------
@@ -699,6 +739,8 @@ def get_catalog_fn(version=None, cat_dir=None, kind='data', tracer='LRG',
                 return Path(cat_dir / f'Uchuu-SHAM_{get_simple_tracer(tracer)}_Y3-v2.0_0000_clustering.dat.{ext}')
             if kind == 'randoms':
                 return [cat_dir / f'Uchuu-SHAM_{get_simple_tracer(tracer)}_Y3-v2.0_0000_{iran}_clustering.ran.{ext}' for iran in range(nran)]
+    if cat_dir is None:
+        raise ValueError('provide either cat_dir or version')
     cat_dir = Path(cat_dir)
     if kind == 'data':
         return _find_extension(cat_dir / f'{tracer}_{region}_clustering.dat', ext)
@@ -1431,6 +1473,7 @@ def combine_stats(observables):
 
     return observable
 
+
 def merge_catalogs(output: str | Path, inputs: list[str | Path], factor: float=1., seed: int=42, read_catalog=_read_catalog, **kwargs):
     import numpy as np
     from mockfactory import Catalog
@@ -1451,6 +1494,7 @@ def merge_catalogs(output: str | Path, inputs: list[str | Path], factor: float=1
             mem()
     catalog = Catalog.concatenate(catalogs, intersection=True)
     catalog.write(output)
+
 
 def merge_randoms_catalogs(output: str | Path, inputs: list[str | Path], parent_randoms_fn=None, factor: float=1., seed=42,
                            read_catalog=_read_catalog, expand_randoms=expand_randoms, **kwargs):

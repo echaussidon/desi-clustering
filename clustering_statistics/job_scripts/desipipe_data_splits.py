@@ -2,7 +2,7 @@
 salloc -N 1 -C "gpu&hbm80g" -t 02:00:00 --gpus 4 --qos interactive --account desi_g
 source /global/common/software/desi/users/adematti/cosmodesi_environment.sh main
 or source /global/homes/s/shengyu/env.sh 2pt_env
-srun -n 4 python job_scripts/blinded_data_pip.py
+srun -n 4 python job_scripts/desipipe_data_splits.py
 desipipe tasks -q data_splits  # check the list of tasks
 desipipe spawn -q data_splits --spawn  # spawn the jobs
 desipipe queues -q data_splits  # check the queue
@@ -36,6 +36,8 @@ tm80 = tm.clone(provider=dict(provider='nersc', time='02:00:00',
                             mpiprocs_per_worker=4, output=output, error=error, stop_after=1, constraint='gpu&hbm80g'))
 tmw = tm.clone(scheduler=dict(max_workers=1), provider=dict(provider='nersc', time='00:10:00',
                 mpiprocs_per_worker=2250, nodes_per_worker=25, output=output, error=error, stop_after=1, constraint='cpu'))
+
+
 def run_stats(version='data-dr2-v2', tracer='LRG', regions=['NGC','SGC'], weight_type = 'weight_FKP', stats_dir=Path(os.getenv('SCRATCH')) / 'measurements', stats=['mesh2_spectrum'], ibatch=None, **kwargs):
     # Everything inside this function will be executed on the compute nodes;
     # This function must be self-contained; and cannot rely on imports from the outer scope.
@@ -75,7 +77,7 @@ if __name__ == '__main__':
     # parser.add_argument('--zrange', nargs='+', type=str, default=(0.1, 0.4), help='Redshift bins')
     # parser.add_argument('--regions', nargs='+', type=str, default=['NGC'], help='Sky regions to include.')  
     # parser.add_argument('--subver', default=None, choices=['zcmb', None], help='sub version for data catalogs')
-    parser.add_argument('--tracers', nargs='+', type=str, default=['LRG'], choices=['BGS','LRG','ELG_LOPnotqso','QSO'], help='Tracers')
+    parser.add_argument('--tracers', nargs='+', type=str, default=['LRG'], choices=['BGS', 'LRG', 'ELG_LOPnotqso', 'QSO'], help='Tracers')
     parser.add_argument('--versions', nargs='+', type=str,  default=['data-dr2-v2'], choices=['data-dr2-v2'], help='Catalog versions to use.')
     parser.add_argument('--weight_types', nargs='+', type=str, default=['default_fkp'],
                         choices=['default', 'default_fkp', 'default_thetacut', 'default_auw', 'bitwise', 'bitwise_auw'], help='Weighting schemes to use.')

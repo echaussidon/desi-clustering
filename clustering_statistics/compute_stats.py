@@ -97,6 +97,7 @@ def compute_stats_from_options(stats, analysis='full_shape', cache=None,
     with_catalogs = True
 
     data, randoms = {}, {}
+    with_stats_blinding = False
     if with_catalogs:
         for tracer in tracers:
             _catalog_options = dict(catalog_options[tracer])
@@ -110,9 +111,12 @@ def compute_stats_from_options(stats, analysis='full_shape', cache=None,
                 # pop as we don't need it anymore
                 _catalog_options |= {key: recon_options.pop(key) for key in list(recon_options) if key in ['nran', 'zrange']}
 
+            with_stats_blinding |= tools.check_if_stats_requires_blinding(analysis=analysis, **_catalog_options)
             data[tracer] = read_clustering_catalog(kind='data', **_catalog_options, concatenate=True)
             randoms[tracer] = read_clustering_catalog(kind='randoms', **_catalog_options, cache=cache, concatenate=False)
 
+    if with_stats_blinding:
+        warnings.warn('Output clustering statistics will be blinded on-the-fly.\nIf you do not want blinding, pass "protected" in the "analysis" argument.')
     # Reconstruction
     if with_recon:
         # data_rec, randoms_rec = {}, {}
@@ -172,6 +176,8 @@ def compute_stats_from_options(stats, analysis='full_shape', cache=None,
                     return {'data': zdata[tracer], 'randoms': zrandoms[tracer]}
 
                 correlation = compute_particle2_correlation(*[functools.partial(get_data, tracer) for tracer in tracers], **correlation_options)
+                if with_stats_blinding:
+                    correlation = tools.apply_blinding(correlation, tracers, zrange)
                 fn = get_stats_fn(kind=stat, catalog=fn_catalog_options, **correlation_options)
                 tools.write_stats(fn, correlation)
 
@@ -198,6 +204,8 @@ def compute_stats_from_options(stats, analysis='full_shape', cache=None,
                     if not isinstance(spectrum, dict): spectrum = {'raw': spectrum}
                     for key, kw in _expand_cut_auw_options(stat, spectrum_options).items():
                         fn = get_stats_fn(kind=stat, catalog=fn_catalog_options, **kw)
+                        if with_stats_blinding:
+                            spectrum[key] = tools.apply_blinding(spectrum[key], tracers, zrange=sum(zrange.values(), start=tuple()))
                         tools.write_stats(fn, spectrum[key])
 
         jax.experimental.multihost_utils.sync_global_devices('spectrum')  # such that spectrum ready for window

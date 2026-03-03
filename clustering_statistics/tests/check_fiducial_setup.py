@@ -22,11 +22,9 @@ def propose_nran_boxsize_from_catalogs():
     for tracer, zrange in zranges:
         for region in ['NGC', 'SGC'][:1]:
             catalog_options = dict(version='data-dr2-v2', tracer=tracer, zrange=zrange, region=region)
-            data_fn = tools.get_catalog_fn(kind='data', **catalog_options)
-            data = tools.read_clustering_catalog(data_fn, kind='data', **catalog_options)
+            data = tools.read_clustering_catalog(kind='data', **catalog_options)
             _nran = 10
-            randoms_fn = tools.get_catalog_fn(kind='randoms', nran=_nran, **catalog_options)
-            randoms = tools.read_clustering_catalog(*randoms_fn, kind='randoms', **catalog_options, concatenate=True)
+            randoms = tools.read_clustering_catalog(kind='randoms', nran=_nran, **catalog_options, concatenate=True)
             alpha = len(data) / (len(randoms) / _nran)
             nran = 50. * alpha
             mattrs = get_mesh_attrs(data['POSITION'], randoms['POSITION'], boxpad=1.2, cellsize=7.5, primes=(2, 3, 5), divisors=(2,))
