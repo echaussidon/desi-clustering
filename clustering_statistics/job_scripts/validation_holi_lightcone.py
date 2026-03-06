@@ -126,13 +126,13 @@ def fit_large_scales(imock=0, tracer='LRG', zranges=None, version='v4.80', weigh
     if zranges is None:
         zranges = tools.propose_fiducial('zranges', tracer)
 
-    for zrange in zranges[-1:]:
+    for zrange in zranges:
         for region in ['NGC', 'SGC'][:1]:
             kw_catalog = dict(imock=imock, tracer=tracer, zrange=zrange, region=region, version=version, weight=weight)
             # Preliminary fit to the data
-            fns = tools.get_stats_fn(kind='mesh2_spectrum_poles', stats_dir=stats_dir, catalog=kw_catalog | dict(imock='*'))
+            fns = [tools.get_stats_fn(kind='mesh2_spectrum_poles', stats_dir=stats_dir, catalog=kw_catalog | dict(imock=imock)) for imock in range(40)]
             spectrum = types.read(fns[0])
-            mean = types.mean([types.read(fn) for fn in fns])
+            mean = types.mean([types.read(fn) for fn in fns if fn.exists()])
             spectrum = spectrum.clone(value=mean.value())
             fn = tools.get_stats_fn(kind='window_mesh2_spectrum_poles', stats_dir=stats_dir, catalog=kw_catalog)
             window = types.read(fn)
@@ -142,7 +142,7 @@ def fit_large_scales(imock=0, tracer='LRG', zranges=None, version='v4.80', weigh
             k = np.mean(k_edges, axis=-1)
             from lsstypes import Mesh2SpectrumPole, Mesh2SpectrumPoles
             out = Mesh2SpectrumPoles([Mesh2SpectrumPole(k=k, k_edges=k_edges, num_raw=np.zeros_like(k), ell=ell) for ell in spectrum.ells])
-            theory = run_preliminary_fit_mesh2_spectrum(spectrum, window, select={'k': (0.02, 0.08)}, theory='kaiser', fixed=['sn0'], out=out)
+            theory = run_preliminary_fit_mesh2_spectrum(spectrum, window, select={'k': (0.01, 0.04)}, fixed=['sn0'], theory='kaiser', out=out)
             fn = tools.get_stats_fn(kind='theory_mesh2_spectrum_poles', stats_dir=stats_dir, catalog=kw_catalog)
             tools.write_stats(fn, theory)
 
@@ -180,12 +180,12 @@ def fit_large_scales(imock=0, tracer='LRG', zranges=None, version='v4.80', weigh
 
 if __name__ == '__main__':
 
-    todo = ['test']
+    #todo = ['test']
     #todo = ['density']
     #todo = ['randoms']
-    #todo = ['large_scales']
+    todo = ['large_scales']
     weight = 'default'
-    stats = ['mesh2_spectrum', 'mesh3_spectrum_sugiyama', 'mesh3_spectrum_scoccimarro', 'window_mesh2_spectrum'][:1]
+    stats = ['mesh2_spectrum', 'mesh3_spectrum_sugiyama', 'mesh3_spectrum_scoccimarro', 'window_mesh2_spectrum'][-1:]
 
     if 'ref' in todo:
         imocks = list(range(5))
@@ -217,30 +217,31 @@ if __name__ == '__main__':
                 cat_dir = Path(os.getenv('SCRATCH')) / 'cai' / 'holi_lightcone_validation'
                 return [cat_dir / f'holi_{tracer}_{version}_GCcomb_{iran:d}_clustering.ran.h5' for iran in range(nran)]
 
-    def list_existing_imocks(nmocks, version='v4.80', tracers=('LRG', 'ELG', 'QSO')):
+    def list_existing_imocks(nmocks, version='v4.80', tracers=('LRG', 'ELG', 'QSO'), maximock=None):
         imocks = []
         for imock in range(1000):
             if all(get_holi_catalog_fn(kind=kind, tracer=tracer, version=version, imock=imock).exists() for tracer in tracers for kind in ['data']):
                 imocks.append(imock)
+            if maximock is not None and imocks and imocks[-1] > maximock: break
             if len(imocks) > nmocks: break
         print(f'Running {imocks}')
         return imocks
 
     if 'randoms' in todo:
-        for tracer in ['LRG', 'ELG', 'QSO'][:1]:
+        tracers = ['LRG', 'ELG', 'QSO'][:-1]
+        for tracer in tracers:
             version = 'v4.80'
-            imocks = list_existing_imocks(100, version=version, tracers=[tracer])
+            imocks = list_existing_imocks(50, version=version, tracers=[tracer], maximock=47)
+            
             make_merged_random_catalog(imocks=imocks, tracer=tracer, version=version, stats_dir=stats_dir, nran=18, get_catalog_fn=get_holi_catalog_fn)
 
     if 'test' in todo:
         #version = 'v4.00'
         version = 'v4.80'
-        tracers = ['LRG', 'ELG', 'QSO'][:1]
-
+        tracers = ['LRG', 'ELG', 'QSO'][:-1]
         for tracer in tracers:
-            imocks = list_existing_imocks(100, version=version, tracers=[tracer])
-            imocks = [imock for imock in imocks if imock > 25]
-            zranges = [(0.8, 1.1)]
+            imocks = list_existing_imocks(50, version=version, tracers=[tracer], maximock=47)
+            zranges = None
             if any('window' in stat for stat in stats):
                 imocks = [1]
             run_stats(tracer, version=version, weight=weight, stats=stats, stats_dir=stats_dir, get_catalog_fn=get_holi_catalog_fn, zranges=zranges, imocks=imocks)
@@ -248,7 +249,7 @@ if __name__ == '__main__':
     if 'density' in todo:
         version = 'v4.80'
         #version = 'v4.00'
-        tracers = ['LRG', 'ELG', 'QSO'][2:]
+        tracers = ['LRG', 'ELG', 'QSO']
         for tracer in tracers:
             imocks = list_existing_imocks(100, version=version, tracers=[tracer])
             plot_density(imock=imocks, tracer=tracer, version=version, weight='default', get_catalog_fn=get_holi_catalog_fn)
@@ -256,7 +257,7 @@ if __name__ == '__main__':
     if 'large_scales' in todo:
         version = 'v4.80'
         #version = 'v4.00'
-        tracers = ['LRG', 'ELG', 'QSO'][:1]
+        tracers = ['LRG', 'ELG', 'QSO'][-1:]
         for tracer in tracers:
-            zranges = [(0.8, 1.1)]
+            zranges = None
             fit_large_scales(imock=1, tracer=tracer, zranges=zranges, version=version, weight='default', stats_dir=stats_dir, plots_dir=plots_dir, get_catalog_fn=get_holi_catalog_fn)

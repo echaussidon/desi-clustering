@@ -108,6 +108,34 @@ def test_recon(stat='recon_particle2_correlation'):
             compute_stats_from_options(stat, catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), mesh2_spectrum={}, particle2_correlation={})
 
 
+def test_complete():
+    if False:
+        tracer = 'LRG'
+        for version, imock in zip(['holi-v1-altmtl', 'glam-uchuu-v1-altmtl'], [460, 128]):
+            catalog_options = dict(version=version, tracer=tracer, zrange=(0.8, 1.1), region='NGC', weight='default', imock=imock, nran=2)
+            for kind in ['forfa_data', 'full_data', 'nz']:
+                fn = tools.get_catalog_fn(kind=kind, **catalog_options)
+                assert fn.exists(), fn
+        complete, reshuffle = {}, {}
+        data = tools.read_clustering_catalog(kind='data', complete=complete, reshuffle=reshuffle, **catalog_options)
+        expand = {'parent_randoms_fn': tools.get_catalog_fn(kind='parent_randoms', version='data-dr2-v2', tracer=tracer, nran=catalog_options['nran'])}
+        randoms = tools.read_clustering_catalog(kind='randoms', complete=complete, reshuffle=reshuffle, expand=expand, **catalog_options)
+
+    stats_dir = Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks'
+    stat = 'mesh2_spectrum'
+    for tracer in ['LRG']:
+        zrange = tools.propose_fiducial('zranges', tracer)[0]
+        for region in ['NGC', 'SGC'][:1]:
+            catalog_options = dict(version='holi-v1-altmtl', tracer=tracer, zrange=zrange, region=region, weight='default', imock=451, nran=2)
+            catalog_options.update(complete={}, expand={'parent_randoms_fn': tools.get_catalog_fn(kind='parent_randoms', version='data-dr2-v2', tracer=tracer, nran=catalog_options['nran'])})
+            #catalog_options.update(expand={'parent_randoms_fn': tools.get_catalog_fn(kind='randoms', version='holi-v1-altmtl', tracer=tracer, region=region, nran=catalog_options['nran'], imock=catalog_options['imock'])})
+            compute_stats_from_options(stat, catalog=catalog_options, get_stats_fn=functools.partial(tools.get_stats_fn, stats_dir=stats_dir), mesh2_spectrum={}, particle2_correlation={})
+            fn = tools.get_stats_fn(kind=stat, stats_dir=stats_dir, **catalog_options)
+            if jax.process_index() == 0:
+                spectrum = types.read(fn)
+                assert np.allclose(np.mean(spectrum.value()), 7226.4642021336085)
+
+
 def test_expand_randoms(stat='mesh2_spectrum'):
     stats_dir = Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks'
     stat = 'mesh2_spectrum'
@@ -247,9 +275,11 @@ if __name__ == '__main__':
     #config.update('jax_num_cpu_devices', 4)
     #config.update('jax_platform_name', 'cpu')
 
-    jax.distributed.initialize()
     setup_logging()
+    jax.distributed.initialize()
 
+    test_complete()
+    exit()
     #test_blinding()
     #test_covariance()
     #test_rotation()
@@ -258,7 +288,7 @@ if __name__ == '__main__':
     #test_auw(stats=['mesh2_spectrum'])
     #test_bitwise(stats=['mesh2_spectrum'])
     #test_expand_randoms()
-    test_optimal_weights()
+    #test_optimal_weights()
     #test_cross()
     #test_window()
     #test_spectrum3()

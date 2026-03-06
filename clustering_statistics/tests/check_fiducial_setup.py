@@ -54,7 +54,7 @@ def check_boxsize_spectrum(stats=['mesh2_spectrum']):
 
 def check_nran_spectrum(stats=['mesh2_spectrum']):
     """Run measurements with varying number of randoms to check stability."""
-    stats_dir = Path(Path(os.getenv('SCRATCH')) / 'clustering-measurements-checks')
+    stats_dir = Path(os.getenv('SCRATCH') / 'clustering-measurements-checks'
     nrans = {'LRG': [8, 9, 11, 18],
              'ELG_LOP': [11, 13, 16, 18],
              'QSO': [8, 9, 11, 18]}
