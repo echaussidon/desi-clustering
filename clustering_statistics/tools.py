@@ -1,4 +1,5 @@
 import os
+import time
 import logging
 from pathlib import Path
 import warnings
@@ -18,6 +19,8 @@ logger = logging.getLogger('tools')
 
 
 desi_dir = Path('/dvs_ro/cfs/cdirs/desi/')
+# These are region splits that require loading NGC+SGC
+special_regions = ['S', 'ALL', 'SnoDES', 'noDES', 'ACT_DR6', 'PLANCK_PR4'] + [f'GAL0{i}' for i in [20, 40, 60, 70, 80, 90, 97, 99]]
 
 
 def mkdir(dirname):
@@ -586,8 +589,9 @@ def fill_fiducial_options(kwargs, analysis='full_shape'):
                         if 'OQE' in weights[tracer].upper():
                             assert options[stat].get('optimal_weights', None) is not None, 'provide optimal_weights in mesh2_spectrum if you want to use OQE'
                         else:
+                            if options[stat].get('optimal_weights', None) is not None:
+                                warnings.warn('Removing optimal_weights from mesh2_spectrum as OQE not in weights')
                             options[stat].pop('optimal_weights', None)
-                            warnings.warn('Removing optimal_weights from mesh2_spectrum as OQE not in weights')
         for stat in ['window_mesh2_spectrum', 'window_mesh3_spectrum']:
             spectrum_options = options[stat.replace('window_', '')]
             spectrum_options = {key: value for key, value in spectrum_options.items() if key in ['selection_weights', 'optimal_weights', 'basis']}
@@ -663,14 +667,12 @@ def get_catalog_fn(version=None, cat_dir=None, kind='data', tracer='LRG',
         Catalog file name(s).
         Multiple file names are returned as a list when region is 'ALL' or when kind is 'randoms' or 'full_randoms', or imock is '*'.
     """
-    # these are region splits that require loading NGC+SGC
-    special_regions = ['S', 'ALL', 'noN', 'noDES', 'SnoDES', 'ACT_DR6', 'PLANCK_PR4'] + [f'GAL0{i}' for i in [20, 40, 60, 70, 80, 90, 97, 99]]
     if region in ['N', 'NGC', 'NGCnoN']: region = 'NGC'
     elif region in ['SGC', 'SGCnoDES', 'DES', 'SSGC']: region = 'SGC'
-    elif 'full' not in kind:
+    elif not any(_kind in kind for _kind in ['full', 'forfa']):
         if region in special_regions: regions = ['NGC', 'SGC']
         else: raise NotImplementedError(f'{region} is unknown')
-        fn_lists =  [get_catalog_fn(version=version, cat_dir=cat_dir, kind=kind, tracer=tracer,
+        fn_lists = [get_catalog_fn(version=version, cat_dir=cat_dir, kind=kind, tracer=tracer,
                                     region=region, weight=weight, nran=nran, imock=imock, ext=ext, **kwargs) for region in regions]
         # flatten list of lists (can append with nrand > 1 and region='ALL')
         if any(isinstance(fn_list, list) for fn_list in fn_lists):
@@ -713,23 +715,21 @@ def get_catalog_fn(version=None, cat_dir=None, kind='data', tracer='LRG',
                 return cat_dir / f'{tracer}_complete_{region}_clustering.dat.{ext}'
             if kind == 'randoms':
                 return [cat_dir / f'{tracer}_complete_{region}_{iran:d}_clustering.ran.{ext}' for iran in range(nran)]
-        
+
         elif version == 'holi-v1-altmtl':
-            cat_dir = desi_dir / f'mocks/cai/LSS/DA2/mocks/holi_v1/altmtl{imock:d}/loa-v1/mock{imock:d}/LSScats'
+            base_dir = desi_dir / f'mocks/cai/LSS/DA2/mocks/holi_v1'
+            cat_dir = base_dir / f'altmtl{imock:d}/loa-v1/mock{imock:d}/LSScats'
             ext = 'fits' if 'full' in kind else 'h5'
-        
-        elif version == 'glam-uchuu-v1-complete':
-            cat_dir = desi_dir / f'mocks/cai/LSS/DA2/mocks/GLAM-Uchuu_v1/altmtl{imock:d}/loa-v1/mock{imock:d}/LSScats'
-            ext = 'h5'
-            if kind == 'data':
-                return cat_dir / f'{tracer}_complete_{region}_clustering.dat.{ext}'
-            if kind == 'randoms':
-                return [cat_dir / f'{tracer}_complete_{region}_{iran:d}_clustering.ran.{ext}' for iran in range(nran)]
-        
+            if kind == 'forfa_data':
+                return base_dir / f'forFA{imock:d}.fits'
+ 
         elif version == 'glam-uchuu-v1-altmtl':
-            cat_dir = desi_dir / f'mocks/cai/LSS/DA2/mocks/GLAM-Uchuu_v1/altmtl{imock:d}/loa-v1/mock{imock:d}/LSScats'
+            base_dir = desi_dir / f'mocks/cai/LSS/DA2/mocks/GLAM-Uchuu_v1'
+            cat_dir = base_dir / f'altmtl{imock:d}/loa-v1/mock{imock:d}/LSScats'
             ext = 'h5'
-        
+            if kind == 'forfa_data':
+                return base_dir / f'forFA{imock:d}.fits'
+
         elif version == 'abacus-2ndgen-complete':
             if 'BGS' in tracer:
                 cat_dir = desi_dir / f'survey/catalogs/Y3/mocks/SecondGenMocks/AbacusSummitBGS_v2/mock{imock:d}'
@@ -743,9 +743,12 @@ def get_catalog_fn(version=None, cat_dir=None, kind='data', tracer='LRG',
         
         elif version == 'abacus-2ndgen-altmtl':
             if 'BGS' in tracer:
-                cat_dir = desi_dir / f'survey/catalogs/Y3/mocks/SecondGenMocks/AbacusSummitBGS_v2/altmtl{imock:d}/kibo-v1/mock{imock:d}/LSScats'
+                base_dir = desi_dir / f'survey/catalogs/Y3/mocks/SecondGenMocks/AbacusSummitBGS_v2'
             else:
-                cat_dir = desi_dir / f'survey/catalogs/Y3/mocks/SecondGenMocks/AbacusSummit_v4_1/altmtl{imock:d}/kibo-v1/mock{imock:d}/LSScats'
+                base_dir = desi_dir / f'survey/catalogs/Y3/mocks/SecondGenMocks/AbacusSummit_v4_1'
+            if kind == 'forfa_data':
+                return base_dir / f'forFA{imock:d}.fits'
+            cat_dir = base_dir / f'altmtl{imock:d}/kibo-v1/mock{imock:d}/LSScats'
             ext = 'fits'
         
         elif 'uchuu-hf' in version:
@@ -772,6 +775,8 @@ def get_catalog_fn(version=None, cat_dir=None, kind='data', tracer='LRG',
         return _find_extension(cat_dir / f'{tracer}_full_HPmapcut.dat', ext)
     if kind == 'full_randoms':
         return [_find_extension(cat_dir / f'{tracer}_{iran:d}_full_HPmapcut.ran', ext) for iran in range(nran)]
+    if kind == 'nz':
+        return cat_dir / f'{tracer}_{region}_nz.txt'
     if kind == 'single_full_randoms':
         return _find_extension(cat_dir / f'{tracer}_{nran:d}_full_HPmapcut.ran', ext)
     if kind == 'single_randoms':
@@ -970,16 +975,18 @@ def _read_catalog(fn, mpicomm=None, **kwargs):
     import numpy as np
     from mockfactory import Catalog
     import warnings
-    one_fn = fn[0] if isinstance(fn, (tuple, list)) else fn
-    if str(one_fn).endswith('.h5'):
+    one_fn = str(fn[0] if isinstance(fn, (tuple, list)) else fn)
+    if one_fn.endswith('.h5'):
         kwargs.setdefault('locking', False)  # fix -> Unable to synchronously open file (unable to lock file, errno = 524, error message = 'Unknown error 524')
         try:
             catalog = Catalog.read(fn, group='LSS', mpicomm=mpicomm, **kwargs)
         except KeyError:
             catalog = Catalog.read(fn, mpicomm=mpicomm, **kwargs)
+    elif one_fn.endswith('.fits'):
+        catalog = Catalog.read(fn, mpicomm=mpicomm, backend=kwargs.get('backend', 'fitsio'))
+        catalog.get(catalog.columns())  # Faster to read all columns at once
     else:
         catalog = Catalog.read(fn, mpicomm=mpicomm)
-    if str(one_fn).endswith('.fits'): catalog.get(catalog.columns())  # Faster to read all columns at once
     if 'WEIGHT' not in catalog:
         warnings.warn('WEIGHT not in catalog')
         catalog['WEIGHT'] = catalog.ones()
@@ -1095,10 +1102,18 @@ def expand_randoms(randoms, parent_randoms, data, from_randoms=('RA', 'DEC'), fr
             if column != 'TARGETID':
                 randoms[column] = parent_randoms[column][parent_index]
     if len(from_data) != 0:
+
+        def _get(data, from_data):
+            from_data = list(from_data)
+            columns = [column for column in from_data if column in data]
+            if columns != from_data:
+                warnings.warn(f'could not take all data columns {columns} != {from_data}')
+            return data[columns]
+        
         if isinstance(data, (list, tuple)):  # NGC + SGC
-            data = Catalog.concatenate([dd[list(from_data) + ['TARGETID']] for dd in data])
+            data = Catalog.concatenate([_get(dd, list(from_data) + ['TARGETID']) for dd in data])
         else:
-            data = data[list(from_data) + ['TARGETID']]
+            data = _get(data, list(from_data) + ['TARGETID'])
         data['TARGETID_DATA'] = data.pop('TARGETID')
 
         if data['TARGETID_DATA'].max() < int(1e9):  # faster method
@@ -1117,7 +1132,7 @@ def expand_randoms(randoms, parent_randoms, data, from_randoms=('RA', 'DEC'), fr
 
 @default_mpicomm
 def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_catalog_fn, get_positions_from_rdz=get_positions_from_rdz,
-                            expand=None, reshuffle=None, FKP_P0=None, binned_weight=None, return_all_columns=False, mpicomm=None, **kwargs):
+                            expand=None, reshuffle=None, complete=None, FKP_P0=None, binned_weight=None, return_all_columns=False, mpicomm=None, **kwargs):
     """
     Read clustering catalog (data or randoms) with given parameters.
 
@@ -1155,20 +1170,18 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
     assert kind in ['data', 'randoms'], 'provide kind (data or randoms)'
     zrange, region, weight_type, imock, tracer = (kwargs.get(key) for key in ['zrange', 'region', 'weight', 'imock', 'tracer'])
     assert weight_type is not None, 'provide weight'
-    # these are region splits that require loading NGC+SGC
-    special_regions = ['S', 'ALL', 'SnoDES', 'noDES', 'ACT_DR6', 'PLANCK_PR4'] + [f'GAL0{i}' for i in [20, 40, 60, 70, 80, 90, 97, 99]]
-    reshuffle_condition = kind == 'randoms' and (isinstance(reshuffle, dict) or (reshuffle is not None))
+    reshuffle_condition = (kind == 'randoms') and (isinstance(reshuffle, dict) or (reshuffle is not None))
     if reshuffle_condition:
         # if randoms are going to be reshuffled, all regions are needed so we force it.
-        fns = get_catalog_fn(kind=kind,  **(kwargs | dict(region='ALL')))
+        fns = get_catalog_fn(kind=kind, **(kwargs | dict(region='ALL')))
     else:
         fns = get_catalog_fn(kind=kind, **kwargs)
     if not isinstance(fns, (tuple, list)): fns = [fns]
     if region in special_regions or reshuffle_condition:
-        # group in pairs (this assumes that fns is a list with the first half corresponds to filenames
+        # Group in pairs (this assumes that fns is a list with the first half corresponds to filenames
         # of one region and the second half to another (e.g., NGC and SGC)
         fns = list(zip(fns[:len(fns) // 2], fns[len(fns) // 2:])) if len(fns) > 1 else fns
-    exists = {f: os.path.exists(f) for fn in fns for f in (fn if isinstance(fn, (list,tuple)) else [fn])}
+    exists = {ff: os.path.exists(ff) for fn in fns for ff in (fn if isinstance(fn, (list, tuple)) else [fn])}
     if not all(exists.values()):
         raise IOError(f'Catalogs {[fn for fn, ex in exists.items() if not ex]} do not exist!')
 
@@ -1196,18 +1209,54 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
     else:
         expand = None
 
+    complete_data = None
+    if isinstance(complete, dict):
+
+        def get_complete_data():
+            full_data_fn = get_catalog_fn(kind='full_data', **(kwargs | dict(region='ALL')))
+            forfa_data_fn = get_catalog_fn(kind='forfa_data', **(kwargs | dict(region='ALL')))
+            nz = {region: np.loadtxt(get_catalog_fn(kind='nz', **(kwargs | dict(region=region))), unpack=True) for region in ['NGC', 'SGC']}
+            full_data = _read_catalog(full_data_fn, mpicomm=MPI.COMM_SELF)
+            forfa_data = _read_catalog(forfa_data_fn, mpicomm=MPI.COMM_SELF, backend='astropy')
+            return complete_from_full_data(forfa_data, full_data, nz=nz, tracer=tracer,
+                                    with_completeness=complete.get('with_completeness', True),
+                                    seed=42)
+
+        if kind == 'data':
+            logger.info('On-the-fly complete data.')
+            complete_data = get_complete_data()
+            if isinstance(reshuffle, dict):
+                # To avoid recreating data
+                reshuffle['data_fn'] = complete_data
+        elif kind == 'randoms':
+            # Force reshuffling
+            if not isinstance(reshuffle, dict):
+                reshuffle = {}
+            if not isinstance(reshuffle.get('data_fn', None), Catalog):
+                warnings.warn('When creating complete data on-the-fly, '
+                              'pass a reshuffle dictionary when reading data catalog '
+                              'to avoid recomputing data for randoms shuffling')
+                reshuffle['data_fn'] = get_complete_data()
+            reshuffle.setdefault('merged_data_fn', reshuffle['data_fn'])
+            logger.info('Reshuffling randoms to match on-the-fly complete data.')
+
     if kind == 'randoms' and isinstance(reshuffle, dict):
         merged_data_fn = reshuffle['merged_data_fn']
-        if not isinstance(merged_data_fn, (tuple, list)):
-            raise ValueError(f"Merged data filenames must be a tuple or list containing the filenames for NGC and SGC")
-        if mpicomm.rank == 0:
-            logger.info('Reshuffling randoms')
-        merged_data = _read_catalog(merged_data_fn, mpicomm=MPI.COMM_SELF)
+        if isinstance(merged_data_fn, Catalog):
+            merged_data = merged_data_fn
+        else:
+            if not isinstance(merged_data_fn, (tuple, list)):
+                raise ValueError(f"Merged data filenames must be a tuple or list containing the filenames for NGC and SGC")
+            if mpicomm.rank == 0:
+                logger.info('Reshuffling randoms')
+            merged_data = _read_catalog(merged_data_fn, mpicomm=MPI.COMM_SELF)
         data_fn = reshuffle.get('data_fn', None)
-        if data_fn is None:
-            data_fn = [get_catalog_fn(kind='data', **(kwargs | dict(region=region))) for region in ['NGC', 'SGC']]
-        data = _read_catalog(data_fn, mpicomm=MPI.COMM_SELF)
-
+        if isinstance(data_fn, Catalog):
+            data = data_fn
+        else:
+            if data_fn is None:
+                data_fn = [get_catalog_fn(kind='data', **(kwargs | dict(region=region))) for region in ['NGC', 'SGC']]
+            data = _read_catalog(data_fn, mpicomm=MPI.COMM_SELF)
         def reshuffle(catalog, seed):
             return reshuffle_randoms(tracer, catalog, merged_data=merged_data, data=data, seed=seed)
     else:
@@ -1219,20 +1268,24 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
         irank = ifn % mpicomm.size
         catalogs[ifn] = (irank, None)
         if mpicomm.rank == irank:  # Faster to read catalogs from one rank
-            catalog = _read_catalog(fn, mpicomm=MPI.COMM_SELF)
-            if expand is not None: catalog = expand(catalog, ifn)
-
+            if kind == 'data' and complete_data is not None:
+                catalog = complete_data
+            else:
+                catalog = _read_catalog(fn, mpicomm=MPI.COMM_SELF)
+            if expand is not None: 
+                catalog = expand(catalog, ifn)
+            
             if reshuffle is not None:
                 if mpicomm.rank == 0:
-                    from time import time
-                    t0=time()
+                    t0 = time.time()
                     logger.info('Reshuffling randoms started.')
                 catalog = reshuffle(catalog, 100 * imock + ifn)
                 if mpicomm.rank == 0:
-                    logger.info(f'Reshuffling randoms completed in {time() - t0:2.1f} s')
+                    logger.info(f'Reshuffling randoms completed in {time.time() - t0:2.1f} s')
             
             columns = ['RA', 'DEC', 'Z', 'WEIGHT', 'WEIGHT_COMP', 'WEIGHT_FKP', 'WEIGHT_SYS', 'WEIGHT_ZFAIL', 'BITWEIGHTS', 'FRAC_TLOBS_TILES', 'NTILE', 'NX', 'TARGETID']
-            if 'wsys' in weight_type and not 'noimsys' in weight_type: columns.append(f'WEIGHT_{weight_type.split('wsys-')[-1].upper()}')
+            if 'wsys' in weight_type and not 'noimsys' in weight_type:
+                columns.append(f"WEIGHT_{weight_type.split('wsys-')[-1].upper()}")
             columns = [column for column in columns if column in catalog.columns()]
             catalog = catalog[columns]
 
@@ -1301,6 +1354,7 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
         return Catalog.concatenate(rdzw)
     else:
         return rdzw
+
 
 @default_mpicomm
 def read_full_catalog(kind, wntile=None, concatenate=True,
@@ -1429,6 +1483,7 @@ def possible_combine_regions(regions):
             combs[_region_comb] = _regions
     return combs
 
+
 def compute_fkp_effective_redshift(*fkps, cellsize=10., order=2, split=None, fields=None, func_of_z=lambda x: x,
                                    resampler='cic', return_fraction=False):
     """
@@ -1488,6 +1543,7 @@ def compute_fkp_effective_redshift(*fkps, cellsize=10., order=2, split=None, fie
         return reduce.sum(), rsum
 
     return compute_fkp_normalization_z(*randoms)
+
 
 def combine_stats(observables):
     """Combine input observables (e.g. NGC and SGC); of :mod:`lsstypes` type."""
@@ -1600,7 +1656,28 @@ def merge_randoms_catalogs(output: str | Path, inputs: list[str | Path], parent_
     concatenate.write(output)
 
 
-def reshuffle_randoms(tracer, randoms, merged_data, data, seed):
+def reshuffle_randoms(tracer, randoms, merged_data, data, seed=42):
+    """
+    Reshuffled random redshifts from (merged) data.
+
+    Parameters
+    ----------
+    tracer : str
+        Tracer, to define reshuffling regions.
+    randoms : Catalog
+        Catalog of randoms.
+    merged_data : Catalog
+        Catalog from which redshifts (and weights, etc.) are taken.
+    data : Catalog
+        Data catalog corresponding to ``randoms``.
+    seed : int, optional
+        Random seed.
+
+    Returns
+    -------
+    catalog : Catalog
+        Catalog of randoms.
+    """
     # get weights
     data_wtotp = data['WEIGHT_COMP'] * data['WEIGHT_SYS'] * data['WEIGHT_ZFAIL']
     data_wcomp = data_wtotp / data['WEIGHT']
@@ -1676,6 +1753,70 @@ def reshuffle_randoms(tracer, randoms, merged_data, data, seed):
     alphas = sum_data_weights / sum_randoms_weights / (sum(sum_data_weights) / sum(sum_randoms_weights))
     logger.info('alpha after renormalization & reweighting: {}'.format(alphas))
 
-    # for iregion, region in enumerate(cregions):
-    #     randoms[select_region(randoms['RA'], randoms['DEC'], region=region)][output_columns].write(output_randoms_fn[iregion])
     return randoms
+
+
+def complete_from_full_data(forfa_data, full_data, nz, tracer, with_completeness=True, seed=42):
+    """
+    Create complete data catalog from For Fiber Assignment (FA) and Full catalogs.
+
+    Parameters
+    ----------
+    forfa_data : Catalog
+        FA catalog.
+    full_data : Catalog
+        Full data catalog.
+    nz : dict
+        Dictionary of {region: nz array}, with nz[1] = lower edge, nz[2] = upper edge, nz[3] = comoving density
+    tracer : str
+        Tracer, for FKP and downsampling ELG (redshift failures).
+    seed : int, optional
+        Random seed.
+
+    Returns
+    -------
+    catalog : Catalog
+        Complete data catalog; randoms should be reassigned redshifts (see :func:`reshuffle_randoms`).
+    """
+    assert forfa_data.mpicomm.size == 1
+    assert full_data.mpicomm.size == 1
+    forfa_data = forfa_data[['TARGETID', 'RSDZ']]
+    forfa_data['Z'] = forfa_data.pop('RSDZ')
+    tracer = get_simple_tracer(tracer)
+    P0 = {'BGS': 7e3, 'LRG': 1e4, 'ELG': 4e3, 'QSO': 6e3}[tracer]
+    full_data = full_data[['TARGETID', 'RA', 'DEC', 'NTILE', 'ZWARN']]
+    mask_contaminants = full_data['TARGETID'] < 419430400000000 #remove contaminants
+    full_data = full_data[mask_contaminants]
+    ld = len(full_data)
+    _, full_index, forfa_index = np.intersect1d(full_data['TARGETID'], forfa_data['TARGETID'], return_indices=True)
+    full_data = full_data[full_index]
+    forfa_data = forfa_data[forfa_index]
+    full_data['Z'] = forfa_data['Z']
+    if 'ELG' in tracer:
+        rng = np.random.RandomState(seed=seed)
+        r = rng.random(full_data.size)
+        mask_lowz = full_data['Z'] < 1.49
+        downsample_z = np.where(mask_lowz, r < 0.96, r < 0.76)
+        full_data = full_data[downsample_z]
+    if with_completeness:
+        mask_assigned = full_data['ZWARN'] != 999999
+    else:
+        mask_assigned = full_data.ones(dtype=bool)
+    weight_ntile = np.bincount(full_data['NTILE'], weights=mask_assigned)
+    mask_ntile = weight_ntile > 0
+    weight_ntile[mask_ntile] /= np.bincount(full_data['NTILE'])[mask_ntile]
+    full_data['WEIGHT_COMP'] = weight_ntile[full_data['NTILE']]
+    for name in ['WEIGHT_SYS', 'WEIGHT_ZFAIL']:
+        full_data[name] = full_data.ones()
+    full_data['NX'] = full_data.zeros()
+    for region in nz:  # NGC, SGC
+        mask_region = select_region(full_data['RA'], full_data['DEC'], region)
+        zedges = np.insert(nz[region][2], 0, nz[region][1][0])
+        idx = np.digitize(full_data['Z'][mask_region], zedges, right=False) - 1
+        mask = (idx >= 0) & (idx < nz[region][3].size - 1)
+        tmpnz = np.zeros_like(idx, dtype=full_data['WEIGHT_COMP'].dtype)
+        tmpnz[mask] = nz[region][3][idx[mask]]
+        full_data['NX'][mask_region] = tmpnz * weight_ntile[full_data['NTILE'][mask_region]]
+    full_data['WEIGHT_FKP'] = 1 / (1 + P0 * full_data['NX'])
+    full_data['WEIGHT'] = full_data['WEIGHT_COMP'] * full_data['WEIGHT_SYS'] * full_data['WEIGHT_ZFAIL']
+    return full_data

@@ -112,6 +112,8 @@ def compute_stats_from_options(stats, analysis='full_shape', cache=None,
                 _catalog_options |= {key: recon_options.pop(key) for key in list(recon_options) if key in ['nran', 'zrange']}
 
             with_stats_blinding |= tools.check_if_stats_requires_blinding(analysis=analysis, **_catalog_options)
+            if isinstance(_catalog_options.get('complete', None), dict):
+                _catalog_options.setdefault('reshuffle', {})  # to pass on complete data
             data[tracer] = read_clustering_catalog(kind='data', **_catalog_options, concatenate=True)
             randoms[tracer] = read_clustering_catalog(kind='randoms', **_catalog_options, cache=cache, concatenate=False)
 
@@ -530,7 +532,8 @@ def main(**kwargs):
     parser.add_argument('--boxsize',  help='box size', type=float, default=None)
     parser.add_argument('--cellsize', help='cell size', type=float, default=None)
     parser.add_argument('--nran', help='number of random files to combine together (1-18 available)', type=int, default=None)
-    parser.add_argument('--expand_randoms', help='expand catalog of randoms; provide version of parent randoms (must be registered in get_catalog_fn)', type=str, choices=['data-dr2-v2'], default=None)
+    parser.add_argument('--make_complete', help='make on-the-fly (completeness-weighted) complete catalogs', type=str, default=None)
+    parser.add_argument('--expand_randoms', help='expand catalog of randoms; provide version of parent randoms (must be registered in get_catalog_fn)', type=str, default=None)
     parser.add_argument('--stats_dir',  help='base directory for measurements, default is SCRATCH', type=str, default=Path(os.getenv('SCRATCH')) / 'measurements')
     parser.add_argument('--stats_extra',  help='extra string to include in measurement filename', type=str, default='')
     parser.add_argument('--combine', help='combine measurements in two regions', type=str, nargs='*', default=None, choices=['mesh2_spectrum', 'mesh3_spectrum', 'recon_particle2_correlation', 'window_mesh2_spectrum', 'window_mesh3_spectrum'])
@@ -571,6 +574,8 @@ def main(**kwargs):
                     _options_imock['catalog'][tracer] = _options_imock['catalog'][tracer] | dict(region=region, imock=imock)
                     if args.expand_randoms:
                         _options_imock['catalog'][tracer]['expand'] = {'parent_randoms_fn': get_catalog_fn(kind='parent_randoms', version=args.expand_randoms, tracer=tracer, region=region, nran=max(value['nran'] for value in _options_imock['recon'].values()))}
+                    if args.make_complete:
+                        _options_imock['catalog'][tracer]['complete'] = {}
                 compute_stats_from_options(args.stats, get_catalog_fn=get_catalog_fn, get_stats_fn=get_stats_fn, cache=cache, analysis=args.analysis, **_options_imock)
                 jax.experimental.multihost_utils.sync_global_devices(region)
 
