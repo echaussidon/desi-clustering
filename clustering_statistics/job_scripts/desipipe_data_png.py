@@ -170,7 +170,6 @@ if __name__ == '__main__':
     regions = ['NGC', 'SGC', 'N', 'NGCnoN', 'SGCnoDES', 'DES'][:2]  # + ['ACT_DR6', 'PLANCK_PR4'] + [f'GAL0{i}' for i in [40, 60]]
     logger.info(f'Running on regions: {regions}')
 
-    # 'LRGxELG_LOP', 'LRGxQSO', 'ELG_LOPxQSO'
     for tracer in ['LRG', 'LRG_zcmb', 'ELGnotqso', 'QSO', 'QSO_zcmb', ('LRG', 'QSO'), ('LRG', 'ELGnotqso'), ('ELGnotqso', 'QSO')][:1]:
         from clustering_statistics import tools
         logger.info(tracer)
@@ -179,23 +178,24 @@ if __name__ == '__main__':
         logger.info(f'zranges: {zranges}')
 
         weights = ['default-fkp-oqe', 'default-fkp']
-        get_run_stats()(cat_dir=cat_dir, stats_dir=stats_dir, tracer=tracer, zranges=zranges, weights=weights, regions=regions, stats=todo)
+        # get_run_stats()(cat_dir=cat_dir, stats_dir=stats_dir, tracer=tracer, zranges=zranges, weights=weights, regions=regions, stats=todo)
+        
+        # if postprocess:
+        #    postprocess_stats(cat_dir=cat_dir, stats_dir=stats_dir, tracer=tracer, zranges=zranges, weights=weights, postprocess=postprocess, stats=todo)
 
-        # # Choice of imaging systematics avaialble in the catalogs:
-        # # https://desi.lbl.gov/trac/wiki/keyprojects/Y3-DR/LSScat/imaging_systematics
+        # Choice of imaging systematics avaialble in the catalogs: https://desi.lbl.gov/trac/wiki/keyprojects/Y3-DR/LSScat/imaging_systematics
         if tracer in ['LRG', 'LRG_zcmb']:
-            weights = ['default-fkp-oqe-wsys_WEIGHT_IMLIN_FINEZBIN_ALLEBVCMB']
+            weights = ['default-fkp-oqe-wsys-imlin_finezbin_allebvcmb']
             if 'zcmb' in tracer:
-                weights += ['default-fkp-oqe-wsys_WEIGHT_IMLIN_FINEZBIN_ALLEBV']
+                weights += ['default-fkp-oqe-wsys-imlin_finezbin_allebv']
         elif tracer in ['ELGnotqso']:
-            weights = ['default-fkp-oqe-wsys_WEIGHT_IMLIN_FINEZBIN_NODEBV']
+            weights = ['default-fkp-oqe-wsys-imlin_finezbin_nodebv']
         elif tracer == ('LRG', 'QSO'):
-            weights = [('default-fkp-oqe-wsys_WEIGHT_IMLIN_FINEZBIN_ALLEBVCMB', 'default-fkp-oqe')]
+            weights = [('default-fkp-oqe-wsys-imlin_finezbin_allebvcmb', 'default-fkp-oqe')]
         else:
             weights = []
- 
+        
         get_run_stats()(cat_dir=cat_dir, stats_dir=stats_dir, tracer=tracer, zranges=zranges, weights=weights, regions=regions, stats=['mesh2_spectrum'])
 
-        weights += ['default-fkp-oqe', 'default-fkp']
         if postprocess:
            postprocess_stats(cat_dir=cat_dir, stats_dir=stats_dir, tracer=tracer, zranges=zranges, weights=weights, postprocess=postprocess, stats=['mesh2_spectrum'])

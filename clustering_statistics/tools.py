@@ -1272,8 +1272,9 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
                 catalog = complete_data
             else:
                 catalog = _read_catalog(fn, mpicomm=MPI.COMM_SELF)
-            if expand is not None:
+            if expand is not None: 
                 catalog = expand(catalog, ifn)
+            
             if reshuffle is not None:
                 if mpicomm.rank == 0:
                     t0 = time.time()
@@ -1281,9 +1282,10 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
                 catalog = reshuffle(catalog, 100 * imock + ifn)
                 if mpicomm.rank == 0:
                     logger.info(f'Reshuffling randoms completed in {time.time() - t0:2.1f} s')
+            
             columns = ['RA', 'DEC', 'Z', 'WEIGHT', 'WEIGHT_COMP', 'WEIGHT_FKP', 'WEIGHT_SYS', 'WEIGHT_ZFAIL', 'BITWEIGHTS', 'FRAC_TLOBS_TILES', 'NTILE', 'NX', 'TARGETID']
             if 'wsys' in weight_type and not 'noimsys' in weight_type:
-                columns.append(weight_type.split('wsys_')[-1])
+                columns.append(f"WEIGHT_{weight_type.split('wsys-')[-1].upper()}")
             columns = [column for column in columns if column in catalog.columns()]
             catalog = catalog[columns]
 
@@ -1300,7 +1302,12 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
     for i, (irank, catalog) in enumerate(catalogs):
         if mpicomm.size > 1:
             catalog = Catalog.scatter(catalog, mpicomm=mpicomm, mpiroot=irank)
-        individual_weight = catalog['WEIGHT'].copy()
+
+        if 'default' in weight_type:
+            individual_weight = catalog['WEIGHT'].copy()
+        else: 
+            if i == 0: logger.info('Not using WEIGHT column as individual weight')
+            individual_weight = np.ones(len(catalog), dtype='f8')
         bitwise_weights = None
 
         if 'bitwise' in weight_type:
@@ -1325,9 +1332,9 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
             individual_weight *= get_binned_weight(catalog, binned_weight['completeness'])
 
         if 'wsys' in weight_type and not 'noimsys' in weight_type:
-            new_wsys = weight_type.split('wsys_')[-1]
-            if i == 0: logger.info(f'Use a different wsys weight: {new_wsys}')
-            individual_weight *= catalog[new_wsys] / catalog['WEIGHT_SYS'] 
+            new_wsys = weight_type.split('wsys-')[-1]
+            if i == 0: logger.info(f'Use a different wsys weight: WEIGHT_{new_wsys.upper()}')
+            individual_weight *= catalog[f'WEIGHT_{new_wsys.upper()}'] / catalog[f'WEIGHT_SYS'] 
 
         if not return_all_columns:
             catalog = catalog[[column for column in ['RA', 'DEC', 'Z', 'NX', 'TARGETID'] if column in catalog]]
@@ -1338,8 +1345,10 @@ def read_clustering_catalog(kind=None, concatenate=True, get_catalog_fn=get_cata
                 catalog[column] = catalog[column].astype('f8')
         if bitwise_weights is not None:
             catalog['BITWEIGHT'] = bitwise_weights
+        
         catalog = get_positions_from_rdz(catalog)
         rdzw.append(catalog)
+
     if concatenate:
         if len(rdzw) > 1: return rdzw[0]
         return Catalog.concatenate(rdzw)
