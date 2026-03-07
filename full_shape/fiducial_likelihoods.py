@@ -1,7 +1,7 @@
 import numpy as np
 from scipy import linalg
 
-from . import tools
+from clustering_statistics import tools
 import lsstypes as types
 
 
@@ -16,6 +16,8 @@ def _match_observable(obj, target):
     """
     if isinstance(obj, types.ObservableTree):
         return obj.match(target)
+    if isinstance(obj, types.WindowMatrix) and isinstance(target, types.ObservableTree):
+        target = next(iter(target))
     return obj.at.observable.match(target)
 
 
@@ -28,6 +30,7 @@ def prepare_fiducial_likelihoods(
     data: str = 'abacus-2ndgen-complete',
     covariance: str = 'holi-v1-altmtl',
     rotation: bool | str = False,
+    cuts_kwargs: dict | None = None,
 ):
     """
     Return a pre-defined GaussianLikelihood assembled from precomputed measurements.
@@ -120,7 +123,7 @@ def prepare_fiducial_likelihoods(
     # ------------------------------------------------------------------
     # Helper: read and assemble an ObservableTree (or WindowMatrix)
     # ------------------------------------------------------------------
-    def read_observables(stats, **kwargs):
+    def read_observables(stats, stat_to_kind=None, **kwargs):
         """
         Read all files for the given stat/tracer combinations and assemble
         them into a single ObservableTree or WindowMatrix.
@@ -129,8 +132,11 @@ def prepare_fiducial_likelihoods(
         """
         loaded, joint_labels, missing = [], {'observables': [], 'tracers': []}, []
 
+        if stat_to_kind is None:
+            stat_to_kind = lambda stat: stat
+
         for key, labels, kw in iter_stat_tracer_combos(stats, **kwargs):
-            fn = tools.get_stats_fn(kind=key[0], **kw)
+            fn = tools.get_stats_fn(kind=stat_to_kind(key[0]), **kw)
             if fn.exists():
                 loaded.append(types.read(fn))
                 for field, value in labels.items():
@@ -147,20 +153,68 @@ def prepare_fiducial_likelihoods(
 
         # If the first item is a WindowMatrix, build a block-diagonal joint matrix.
         if isinstance(loaded[0], types.WindowMatrix):
+            if len(loaded) == 1:
+                return loaded[0]
             return _combine_window_matrices(loaded, joint_labels)
         else:
             return types.ObservableTree(loaded, **joint_labels)
 
     def _combine_window_matrices(windows, labels):
         """Stack a list of WindowMatrix objects into a single block-diagonal one."""
-        values = [w.value for w in windows]
+        values = [w.value() for w in windows]
         observables = [w.observable for w in windows]
         theories = [w.theory for w in windows]
         return types.WindowMatrix(
-            value=linalg.block_diag(values),
+            value=linalg.block_diag(*values),
             observable=types.ObservableTree(observables, **labels),
             theory=types.ObservableTree(theories, **labels),
         )
+
+    def _apply_default_stat_cuts(observable_tree):
+        """Apply requested k/multipole selections per statistic to an ObservableTree."""
+        defaults = {
+            'mesh2_spectrum': {
+                'ells': [0, 2],
+                'kmin': 0.02,
+                'kmax': 0.20,
+                'rebin': 5,
+            },
+            'mesh3_spectrum': {
+                'ells': [(0, 0, 0), (2, 0, 2)],
+                'kmin': 0.02,
+                'kmax_b0': 0.12,
+                'kmax_b2': 0.08,
+            },
+        }
+
+        user_cuts = cuts_kwargs or {}
+        ps_cuts = defaults['mesh2_spectrum'] | user_cuts.get('mesh2_spectrum', {})
+        bs_cuts = defaults['mesh3_spectrum'] | user_cuts.get('mesh3_spectrum', {})
+
+        trimmed = observable_tree
+        for key, at, _ in iter_stat_tracer_combos(stats):
+            stat = key[0]
+            branch = trimmed.get(**at)
+
+            if stat == 'mesh2_spectrum':
+                if ps_cuts.get('ells') is not None:
+                    branch = branch.get(ells=list(ps_cuts['ells']))
+                if ps_cuts.get('rebin') is not None and ps_cuts['rebin'] > 1:
+                    branch = branch.select(k=slice(0, None, ps_cuts['rebin']))
+                if ps_cuts.get('kmin') is not None and ps_cuts.get('kmax') is not None:
+                    branch = branch.select(k=(ps_cuts['kmin'], ps_cuts['kmax']))
+
+            elif stat == 'mesh3_spectrum':
+                if bs_cuts.get('ells') is not None:
+                    branch = branch.get(ells=list(bs_cuts['ells']))
+                if bs_cuts.get('kmin') is not None and bs_cuts.get('kmax_b0') is not None:
+                    branch = branch.select(k=(bs_cuts['kmin'], bs_cuts['kmax_b0']))
+                if (2, 0, 2) in list(bs_cuts.get('ells', [])) and bs_cuts.get('kmin') is not None and bs_cuts.get('kmax_b2') is not None:
+                    branch = branch.at(ells=(2, 0, 2)).select(k=(bs_cuts['kmin'], bs_cuts['kmax_b2']))
+
+            trimmed = trimmed.at(**at).match(branch)
+
+        return trimmed
 
     # ------------------------------------------------------------------
     # Step 1 — Data vector: average over 25 Abacus mocks
@@ -179,11 +233,17 @@ def prepare_fiducial_likelihoods(
         if (obs := read_observables(stats, imock=imock, **data_kwargs)) is not None
     ]
     data_vector = types.mean(mock_observables)
+    data_vector = _apply_default_stat_cuts(data_vector)
 
     # ------------------------------------------------------------------
     # Step 2 — Window matrix: read from mock 0
     # ------------------------------------------------------------------
-    window_matrix = read_observables(stats, imock=0, **data_kwargs)
+    window_matrix = read_observables(
+        stats,
+        imock=0,
+        stat_to_kind=lambda stat: f'window_{stat}',
+        **data_kwargs,
+    )
 
     # ------------------------------------------------------------------
     # Step 3 — Apply window-function rotation (optional)
