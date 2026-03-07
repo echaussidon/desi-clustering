@@ -170,7 +170,7 @@ def prepare_fiducial_likelihoods(
             theory=types.ObservableTree(theories, **labels),
         )
 
-    def _apply_default_stat_cuts(observable_tree):
+    def _apply_stat_cuts(observable_tree):
         """Apply requested k/multipole selections per statistic to an ObservableTree."""
         defaults = {
             'mesh2_spectrum': {
@@ -233,7 +233,7 @@ def prepare_fiducial_likelihoods(
         if (obs := read_observables(stats, imock=imock, **data_kwargs)) is not None
     ]
     data_vector = types.mean(mock_observables)
-    data_vector = _apply_default_stat_cuts(data_vector)
+    data_vector = _apply_stat_cuts(data_vector)
 
     # ------------------------------------------------------------------
     # Step 2 — Window matrix: read from mock 0
