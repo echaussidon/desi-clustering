@@ -22,6 +22,7 @@ from pathlib import Path
 
 import numpy as np
 
+from cosmoprimo.fiducial import DESI
 from desilike.theories.galaxy_clustering import (
     REPTVelocileptorsTracerPowerSpectrumMultipoles,
     DirectPowerSpectrumTemplate,
@@ -37,10 +38,9 @@ from desilike.observables.galaxy_clustering import (
 from desilike.emulators import EmulatedCalculator, Emulator, TaylorEmulatorEngine
 from desilike.likelihoods import ObservablesGaussianLikelihood, SumLikelihood
 from desilike.theories import Cosmoprimo
-from cosmoprimo.fiducial import DESI
-from desilike import setup_logging, ParameterCollection
+from desilike.profilers import MinuitProfiler
 from desilike.samplers import EmceeSampler
-
+from desilike import setup_logging, ParameterCollection
 import lsstypes as types
 
 from full_shape.fiducial_likelihoods import prepare_fiducial_likelihoods
@@ -372,6 +372,11 @@ def _extract_ps_components(lk):
                 window = window.at.observable.get(observables='spectrum2')
             except ValueError:
                 pass
+        if isinstance(window.theory, types.ObservableTree):
+            try:
+                window = window.at.theory.get(observables='spectrum2')
+            except ValueError:
+                pass
         window = window.at.observable.match(obs)
 
     return obs, cov, window
@@ -408,6 +413,11 @@ def _extract_bs_components(lk):
         if isinstance(window.observable, types.ObservableTree):
             try:
                 window = window.at.observable.get(observables='spectrum3')
+            except ValueError:
+                pass
+        if isinstance(window.theory, types.ObservableTree):
+            try:
+                window = window.at.theory.get(observables='spectrum3')
             except ValueError:
                 pass
         window = window.at.observable.match(obs)
@@ -506,7 +516,7 @@ def get_observables(
         ps_obs = TracerPowerSpectrumMultipolesObservable(
             data=obs_ps,
             covariance=cov_ps,
-            wmatrix=wmat_ps,
+            window=wmat_ps,
             theory=theories['ps'],
         )
         obs_dict['ps'] = ps_obs
@@ -564,7 +574,7 @@ def set_emulator(observables, emulator_dir='./emulators', order=4):
                 emulated_pt = EmulatedCalculator.load(filename)
             else:
                 print(f'  Fitting {comp.upper()} emulator for {tracer}: {filename}')
-                theory_calc = obs.wmatrix.theory if hasattr(obs, 'wmatrix') and obs.wmatrix is not None else obs
+                theory_calc = obs.theory
                 emulator = Emulator(
                     theory_calc.pt,
                     engine=TaylorEmulatorEngine(method='finite', order=order),
@@ -581,7 +591,7 @@ def set_emulator(observables, emulator_dir='./emulators', order=4):
 
 # ─── Analytic marginalisation ────────────────────────────────────────────────
 
-def set_analytic_marginalization(observables, prior_basis):
+def set_analytic_marginalization(observables, prior_basis, derived='.marg'):
     """Mark PS EFT counter-terms and shot-noise parameters for analytic marginalisation.
 
     Only PS parameters are marginalised analytically.  BS stochastic
@@ -608,7 +618,7 @@ def set_analytic_marginalization(observables, prior_basis):
             continue  # BS-only fit; nothing to marginalise analytically
         ps_obs = obs_dict['ps']
         for param in marg_params:
-            ps_obs.wmatrix.theory.params[param].update(derived='.marg')
+            ps_obs.theory.init.params[param].update(derived=derived)
 
     return observables
 
@@ -651,20 +661,39 @@ def get_likelihood(observables, fit_type):
 
 # ─── MCMC ────────────────────────────────────────────────────────────────────
 
-def run_mcmc(likelihood, chain_name, GR_criteria=0.3):
-    """Run an Emcee MCMC chain until the Gelman-Rubin criterion is met.
+def sample(likelihood, filename, GR_criteria=0.1):
+    """
+    Run an Emcee MCMC chain until the Gelman-Rubin criterion is met.
 
     Parameters
     ----------
     likelihood : SumLikelihood
         Joint likelihood to sample.
-    chain_name : str
+    filename : Path, str
         File path prefix for saving the chain.
     GR_criteria : float
         Gelman-Rubin convergence threshold on the maximum eigenvalue.
     """
-    sampler = EmceeSampler(likelihood, save_fn=chain_name)
+    for param in likelihood.all_params.select(solved=True):
+        param.update(derived='.marg')
+    sampler = EmceeSampler(likelihood, save_fn=filename)
     sampler.run(check={'max_eigen_gr': GR_criteria})
+
+
+def profile(likelihood, filename):
+    """
+    Run likelihood profiling.
+
+    Parameters
+    ----------
+    likelihood : SumLikelihood
+        Joint likelihood to profile.
+    """
+    for param in likelihood.all_params.select(solved=True):
+        param.update(derived='.best')
+    profiler = MinuitProfiler(likelihood, save_fn=filename)
+    profiler.maximize()
+    print(profiler.profiles.to_stats(tablefmt='pretty'))
 
 
 # ─── Entry point ─────────────────────────────────────────────────────────────
@@ -672,6 +701,11 @@ def run_mcmc(likelihood, chain_name, GR_criteria=0.3):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description='Fit DESI cutsky clustering statistics (PS, BS, or joint).',
+    )
+    parser.add_argument(
+        '--todo', type=str, default='sample',
+        choices=['profile', 'sample'], nargs='*',
+        help='Run best fit (maximize) and / or sample.',
     )
     parser.add_argument(
         '--fit_type', type=str, default='joint',
@@ -754,11 +788,11 @@ if __name__ == '__main__':
         help='Directory for Taylor emulator files (default: ./emulators).',
     )
     parser.add_argument(
-        '--emulator_order', type=int, default=4,
-        help='Taylor emulator expansion order (default: 4).',
+        '--emulator_order', type=int, default=3,
+        help='Taylor emulator expansion order (default: 3).',
     )
     parser.add_argument(
-        '--GR_criteria', type=float, default=0.3,
+        '--GR_criteria', type=float, default=0.1,
         help='Gelman-Rubin convergence threshold (default: 0.3).',
     )
     parser.add_argument(
@@ -769,6 +803,9 @@ if __name__ == '__main__':
         '--no_analytic_marg', action='store_true',
         help='Disable analytic marginalisation of PS nuisance parameters.',
     )
+    out_dir = Path(os.getenv('SCRATCH')) / 'fits'
+    parser.add_argument('--out_dir', type=str, default=out_dir,
+                       help=f'Output directory for fitting results, default is {out_dir}')
     args = parser.parse_args()
 
     setup_logging()
@@ -826,7 +863,11 @@ if __name__ == '__main__':
     likelihood = get_likelihood(observables, args.fit_type)
 
     tracer_str = '_'.join(args.tracers)
-    chain_name = (
-        f'./chain_{args.fit_type}_{tracer_str}_{args.region}'
-    )
-    run_mcmc(likelihood, chain_name, GR_criteria=args.GR_criteria)
+    chain_fn = args.out_dir / f'chain_{args.fit_type}_{tracer_str}_{args.region}'
+    profiles_fn = args.out_dir / f'profiles_{args.fit_type}_{tracer_str}_{args.region}.npy'
+
+    if 'sample' in args.todo:
+        sample(likelihood, chain_fn, GR_criteria=args.GR_criteria)
+
+    if 'profile' in args.todo:
+        profile(likelihood, profiles_fn)

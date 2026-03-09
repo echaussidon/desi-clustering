@@ -13,11 +13,22 @@ def _match_observable(obj, target):
     and ``CovarianceMatrix`` require going through ``.at.observable.match()``.
     This helper dispatches to the correct call so callers don't need to care
     about the underlying type.
+
+    For a joint (multi-stat) fit the ``WindowMatrix`` already carries an
+    ``ObservableTree`` observable that covers all stats; in that case we match
+    against the full joint target rather than stripping it to one branch.
     """
     if isinstance(obj, types.ObservableTree):
         return obj.match(target)
     if isinstance(obj, types.WindowMatrix) and isinstance(target, types.ObservableTree):
-        target = next(iter(target))
+        # Only strip the ObservableTree to its first branch when the window covers
+        # a single stat.  A joint window has its observable constructed explicitly
+        # as types.ObservableTree (exact type), while a single-stat window has a
+        # concrete subclass (e.g. Mesh2SpectrumPoles) that also inherits from
+        # ObservableTree but lacks the 'observables' tree dimension.
+        # Use an exact-type check (not isinstance) to distinguish them.
+        if type(obj.observable) is not types.ObservableTree:
+            target = next(iter(target))
     return obj.at.observable.match(target)
 
 
@@ -209,6 +220,8 @@ def prepare_fiducial_likelihoods(
                     branch = branch.get(ells=list(bs_cuts['ells']))
                 if bs_cuts.get('kmin') is not None and bs_cuts.get('kmax_b0') is not None:
                     branch = branch.select(k=(bs_cuts['kmin'], bs_cuts['kmax_b0']))
+                if bs_cuts.get('rebin') is not None and bs_cuts['rebin'] > 1:
+                    branch = branch.select(k=slice(0, None, bs_cuts['rebin']))
                 if (2, 0, 2) in list(bs_cuts.get('ells', [])) and bs_cuts.get('kmin') is not None and bs_cuts.get('kmax_b2') is not None:
                     branch = branch.at(ells=(2, 0, 2)).select(k=(bs_cuts['kmin'], bs_cuts['kmax_b2']))
 

@@ -537,7 +537,8 @@ def main(**kwargs):
     parser.add_argument('--nran', help='number of random files to combine together (1-18 available)', type=int, default=None)
     parser.add_argument('--make_complete', help='make on-the-fly (completeness-weighted) complete catalogs', type=str, default=None)
     parser.add_argument('--expand_randoms', help='expand catalog of randoms; provide version of parent randoms (must be registered in get_catalog_fn)', type=str, default=None)
-    parser.add_argument('--stats_dir',  help='base directory for measurements, default is SCRATCH', type=str, default=Path(os.getenv('SCRATCH')) / 'measurements')
+    meas_dir = Path(os.getenv('SCRATCH')) / 'measurements'
+    parser.add_argument('--stats_dir',  help=f'base directory for measurements, default is {meas_dir}', type=str, default=meas_dir)
     parser.add_argument('--stats_extra',  help='extra string to include in measurement filename', type=str, default='')
     parser.add_argument('--combine', help='combine measurements in two regions', type=str, nargs='*', default=None, choices=['mesh2_spectrum', 'mesh3_spectrum', 'recon_particle2_correlation', 'window_mesh2_spectrum', 'window_mesh3_spectrum'])
 
