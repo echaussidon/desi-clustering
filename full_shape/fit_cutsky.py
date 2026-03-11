@@ -109,6 +109,11 @@ def get_cosmology():
     -------
     cosmo : Cosmoprimo
     fiducial : cosmoprimo.Cosmology
+    nparams_cosmo : int
+        Number of free (non-fixed) cosmological parameters in ``param_config``.
+        Counted directly from the config dict to avoid CLASS-internal parameters
+        (e.g. ``theta_MC_100``) that appear non-fixed in ``cosmo.params`` but
+        are not actually sampled in the MCMC.
     """
     cosmo = Cosmoprimo(engine='class')
     cosmo.init.params['H0'] = dict(derived=True)
@@ -442,6 +447,8 @@ def get_observables(
     A_full_status=False,
     damping='lor',
     cuts_kwargs=None,
+    cov_corrections=('hartlap', 'percival'),
+    no_analytic_marg=False,
 ):
     """Build desilike observables for a given tracer and fit mode.
 
@@ -475,6 +482,15 @@ def get_observables(
         Use the full A-matrix in FOLPS.
     damping : str
         FoG damping kernel.
+    cov_corrections : sequence of str, default=('hartlap', 'percival')
+        Covariance correction factors to apply.  Any combination of
+        'hartlap' and 'percival'.  Pass an empty sequence to skip.
+        Forwarded to prepare_fiducial_likelihoods.
+    no_analytic_marg : bool, default=False
+        When True, skip analytic marginalisation.  Affects the Percival
+        ``nparams`` count: if marginalisation is active, the marginalised
+        EFT/shot-noise parameters are excluded because they are integrated
+        out exactly and do not propagate through the noisy covariance.
 
     Returns
     -------
@@ -484,6 +500,18 @@ def get_observables(
     """
     tracer_label, zrange = TRACER_CONFIG[tracer]
     stats = FIT_TYPE_STATS[fit_type]
+
+    cosmo, fiducial = get_cosmology()
+    sigma8_fid = fiducial.sigma8_z(TRACER_REDSHIFTS[tracer])
+
+    nuisance_params = get_nuisance_priors(
+        fit_type, prior_basis, width_EFT, width_SN0, width_SN2,
+        pt_model=pt_model, b3_coev=b3_coev, sigma8_fid=sigma8_fid,
+    )
+
+    # For Percival correction:
+    # 7 effective parameters for ps- or bs-only, 9 for joint fit
+    nparams = 7 if fit_type in ('ps', 'bs') else 9
 
     print(f'  Loading precomputed likelihood  (fit_type={fit_type})')
     lk = prepare_fiducial_likelihoods(
@@ -495,12 +523,13 @@ def get_observables(
         data=data,
         covariance=covariance,
         cuts_kwargs=cuts_kwargs,
+        cov_corrections=list(cov_corrections),
+        nparams=nparams,
     )
 
     # Full covariance matrix (needed for ObservablesGaussianLikelihood)
     full_cov = lk.covariance.value()
 
-    cosmo, fiducial = get_cosmology()
     theories = get_theory(
         tracer, fit_type, fiducial, cosmo,
         pt_model=pt_model, prior_basis=prior_basis,
@@ -691,9 +720,12 @@ def profile(likelihood, filename):
     """
     for param in likelihood.all_params.select(solved=True):
         param.update(derived='.best')
-    profiler = MinuitProfiler(likelihood, save_fn=filename)
-    profiler.maximize()
+    profiler = MinuitProfiler(likelihood, save_fn=filename, seed=42)
+    profiler.maximize(niterations=1)
     print(profiler.profiles.to_stats(tablefmt='pretty'))
+
+def test(likelihood):
+    print(likelihood())
 
 
 # ─── Entry point ─────────────────────────────────────────────────────────────
@@ -704,7 +736,7 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         '--todo', type=str, default='sample',
-        choices=['profile', 'sample'], nargs='*',
+        choices=['profile', 'sample', 'test'], nargs='*',
         help='Run best fit (maximize) and / or sample.',
     )
     parser.add_argument(
@@ -788,8 +820,8 @@ if __name__ == '__main__':
         help='Directory for Taylor emulator files (default: ./emulators).',
     )
     parser.add_argument(
-        '--emulator_order', type=int, default=3,
-        help='Taylor emulator expansion order (default: 3).',
+        '--emulator_order', type=int, default=4,
+        help='Taylor emulator expansion order (default: 4).',
     )
     parser.add_argument(
         '--GR_criteria', type=float, default=0.1,
@@ -802,6 +834,12 @@ if __name__ == '__main__':
     parser.add_argument(
         '--no_analytic_marg', action='store_true',
         help='Disable analytic marginalisation of PS nuisance parameters.',
+    )
+    parser.add_argument(
+        '--cov_corrections', nargs='*', default=['hartlap', 'percival'],
+        choices=['hartlap', 'percival'],
+        help='Covariance correction factors to apply (default: hartlap percival). '
+             'Pass --cov_corrections with no arguments to disable all corrections.',
     )
     out_dir = Path(os.getenv('SCRATCH')) / 'fits'
     parser.add_argument('--out_dir', type=str, default=out_dir,
@@ -845,6 +883,8 @@ if __name__ == '__main__':
             width_SN0=args.width_SN0,
             width_SN2=args.width_SN2,
             cuts_kwargs=cuts_kwargs,
+            cov_corrections=args.cov_corrections,
+            no_analytic_marg=args.no_analytic_marg,
         )
 
     # ── Optionally fit / load emulators ───────────────────────────────────
@@ -871,3 +911,6 @@ if __name__ == '__main__':
 
     if 'profile' in args.todo:
         profile(likelihood, profiles_fn)
+
+    if 'test' in args.todo:
+        test(likelihood)

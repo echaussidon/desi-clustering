@@ -3,6 +3,7 @@ from scipy import linalg
 
 from clustering_statistics import tools
 import lsstypes as types
+from lsstypes.utils import get_hartlap2007_factor, get_percival2014_factor
 
 
 def _match_observable(obj, target):
@@ -42,6 +43,8 @@ def prepare_fiducial_likelihoods(
     covariance: str = 'holi-v1-altmtl',
     rotation: bool | str = False,
     cuts_kwargs: dict | None = None,
+    cov_corrections: list | None = None,
+    nparams: int | None = None,
 ):
     """
     Return a pre-defined GaussianLikelihood assembled from precomputed measurements.
@@ -74,6 +77,19 @@ def prepare_fiducial_likelihoods(
           into the covariance matrix.
         - any other str without 'marg': apply rotation with marginalization
           priors appended to the window matrix instead.
+    cov_corrections : list of str or None, default=None
+        List of precision-matrix correction factors to apply.  Each entry
+        is applied multiplicatively to the covariance matrix:
+        - 'hartlap' : Hartlap et al. (2007) — corrects bias in the precision
+          matrix from a finite mock suite.  Divides C by the Hartlap factor
+          (h < 1, so this inflates the covariance / widens posteriors).
+        - 'percival': Percival et al. (2014) — propagates covariance
+          estimation uncertainty into the posterior.  Requires ``nparams``.
+        Pass e.g. ['hartlap', 'percival'] to apply both.  Default None
+        means no corrections are applied.
+    nparams : int or None, default=None
+        Number of free model parameters.  Required when 'percival' is in
+        ``cov_corrections``.
 
     Returns
     -------
@@ -334,6 +350,32 @@ def prepare_fiducial_likelihoods(
     # Re-align window and covariance to the (possibly rotated) data vector.
     window_matrix = _match_observable(window_matrix, data_vector)
     covariance_matrix = _match_observable(covariance_matrix, data_vector)
+
+    # ------------------------------------------------------------------
+    # Step 6 — Apply precision-matrix correction factors (optional)
+    # ------------------------------------------------------------------
+    if cov_corrections:
+        nobs = covariance_matrix.attrs['nobs']
+        nbins = covariance_matrix.value().shape[0]
+        factor = 1.0
+        if 'hartlap' in cov_corrections:
+            # Hartlap corrects C^{-1}; encoding as a covariance correction
+            # means dividing C by h (h < 1 → inflates the covariance).
+            h = get_hartlap2007_factor(nobs, nbins)
+            factor /= h
+            print(f'  Hartlap correction: nobs={nobs}, nbins={nbins}, '
+                  f'factor=1/{h:.6f} = {1/h:.6f}')
+        if 'percival' in cov_corrections:
+            if nparams is None:
+                raise ValueError(
+                    "nparams must be provided when 'percival' is in cov_corrections."
+                )
+            p = get_percival2014_factor(nobs, nbins, nparams)
+            factor *= p
+            print(f'  Percival correction: nobs={nobs}, nbins={nbins}, '
+                  f'nparams={nparams}, factor={p:.6f}')
+        covariance_matrix = covariance_matrix.clone(value=covariance_matrix.value() * factor)
+        print(f'  Total covariance rescaling factor: {factor:.6f}')
 
     return types.GaussianLikelihood(
         observable=data_vector,
