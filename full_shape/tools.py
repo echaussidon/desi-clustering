@@ -363,14 +363,10 @@ def get_stats(observables: list[dict], covariance: dict=None, unpack: bool=False
     cache_fn = None
     if cache_dir is not None:
         cache_dir = Path(cache_dir)
-        _str_from_options = str_from_likelihood_options({'observables': observables_options, 'covariance': covariance_options}, level={'catalog': 100, 'select': 100})
-        corrections = covariance_options.get('corrections', None)
-        if corrections:
-            if isinstance(corrections, str):
-                corrections = [corrections]
-            _str_from_options += '_corr-' + '-'.join(str(c).lower() for c in corrections)
-        if covariance_options.get('nparams', None) is not None:
-            _str_from_options += f"_nparams-{int(covariance_options['nparams'])}"
+        _str_from_options = str_from_likelihood_options(
+            {'observables': observables_options, 'covariance': covariance_options},
+            level={'catalog': 100, 'select': 100, 'covariance': 100},
+        )
         cache_fn = cache_dir / 'prepared_stats' / f'{_str_from_options}.h5'
         if cache_fn.exists():
             logger.info(f'Reading cached stats {cache_fn}.')
@@ -846,13 +842,28 @@ def str_from_likelihood_options(likelihood_options, level: int=None):
     level : dict
         "Verbosity level". Default is {'stat': 1, 'catalog': 1, 'theory': 0, 'covariance': 0}.
         Increase for more details.
+        Covariance level behavior:
+        - > 0: include covariance version
+        - >= 3: include covariance corrections and optional nparams
     """
     level = _get_level(level)
     out_str = []
     for options in likelihood_options['observables']:
         out_str.append(_str_from_observable_options(options, level=level))
     if level['covariance'] > 0:
-        out_str.append('cov-' + likelihood_options['covariance']['version'])
+        covariance = likelihood_options.get('covariance', {}) or {}
+        covariance_str = ['cov-' + covariance.get('version', 'none')]
+        if level['covariance'] >= 3:
+            corrections = covariance.get('corrections', None)
+            if isinstance(corrections, str):
+                corrections = [corrections]
+            corrections = sorted(str(corr).lower() for corr in (corrections or []))
+            if corrections:
+                covariance_str.append('corr-' + '-'.join(corrections))
+            nparams = covariance.get('nparams', None)
+            if nparams is not None:
+                covariance_str.append(f'nparams-{int(nparams)}')
+        out_str.append('-'.join(covariance_str))
     return '+'.join(out_str)
 
 
